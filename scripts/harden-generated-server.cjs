@@ -28,16 +28,18 @@ replaceRequired(
   "import PDF compatible ESM"
 );
 
-// Refuser un secret de session public ou absent en production.
+// Ne jamais utiliser un secret public et prévisible. En l'absence de variable
+// Render, un secret aléatoire permet le démarrage mais invalide les sessions
+// lors d'un redémarrage ; un avertissement explicite est alors émis.
 replaceRequired(
   /const APP_URL = process\.env\.APP_URL \|\| `http:\/\/localhost:\$\{PORT\}`;/,
-  'const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;\nif (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {\n  throw new Error("SESSION_SECRET est obligatoire en production.");\n}',
-  "secret de session obligatoire"
+  'const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;\nconst SESSION_SECRET = process.env.SESSION_SECRET || uuidv4();\nif (!process.env.SESSION_SECRET) console.warn("SESSION_SECRET absente : un secret temporaire a été généré ; les sessions seront invalidées au redémarrage.");',
+  "secret de session non prévisible"
 );
 
 replaceRequired(
   /secret: process\.env\.SESSION_SECRET \|\| ["']development-only-change-me["']/,
-  'secret: process.env.SESSION_SECRET || "local-development-secret"',
+  "secret: SESSION_SECRET",
   "suppression du secret public"
 );
 
