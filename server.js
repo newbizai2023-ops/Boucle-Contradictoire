@@ -1,4 +1,13 @@
 import express from "express";
+import session from "express-session";
+import passport from "passport";
+import { Strategy as GoogleStrategy } from "passport-google-oauth20";
+import pg from "pg";
+import connectPgSimple from "connect-pg-simple";
+import PDFDocument from "pdfkit";
+import ExcelJS from "exceljs";
+import { Document, Packer, Paragraph, HeadingLevel } from "docx";
+import { v4 as uuidv4 } from "uuid";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,166 +15,95 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const FIRECRAWL_URL = "https://api.firecrawl.dev/v2/scrape";
+const pool = process.env.DATABASE_URL ? new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false }) : null;
+const jobs = new Map();
 
-app.use(express.json({ limit: "4mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+app.set("trust proxy", 1);
+app.use(express.json({ limit: "6mb" }));
+const PgSession = connectPgSimple(session);
+app.use(session({ store: pool ? new PgSession({ pool, createTableIfMissing: true }) : undefined, secret: process.env.SESSION_SECRET || "development-only-change-me", resave: false, saveUninitialized: false, cookie: { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: 7 * 24 * 60 * 60 * 1000 } }));
+app.use(passport.initialize());
+app.use(passport.session());
 
-const writerSystem = `Tu es le rédacteur principal d'une étude professionnelle. Produis un document clair, structuré et exploitable. Distingue systématiquement faits vérifiés, hypothèses, estimations et recommandations. Cite des sources identifiables. N'invente jamais une source, un tarif ou une fonctionnalité. Lorsque tu ne peux pas vérifier une information, écris exactement : « Je ne peux pas confirmer cette information ».`;
-
-const auditorSystem = `Tu es un auditeur contradictoire indépendant. Vérifie les faits, sources, dates, calculs, unités, hypothèses et conclusions. Cherche les erreurs de logique, les omissions et les formulations excessivement affirmatives. Réponds uniquement en JSON avec les champs score_global, decision, resume, anomalies et nouveau_cycle_requis. Chaque anomalie contient gravite, probleme et correction_attendue.`;
-
-const arbiterSystem = `Tu es l'arbitre final d'une boucle contradictoire. Tu n'es ni le rédacteur ni l'auditeur. Examine la demande initiale, le document final et l'historique des audits. Décide si le document peut être livré. Ne cherche pas un compromis artificiel : tranche selon la solidité des preuves, la cohérence des calculs et la proportionnalité des conclusions. Réponds uniquement en JSON avec les champs decision, score_final, justification, reserves et action_recommandee. decision doit être l'une des valeurs APPROUVE, APPROUVE_AVEC_RESERVES ou REJETE.`;
-
-function validateModel(value, label) {
-  if (typeof value !== "string" || !/^[~a-zA-Z0-9_.:/-]{3,160}$/.test(value)) {
-    throw new Error(`${label} invalide.`);
-  }
-  return value;
-}
-
-async function callOpenRouter({ apiKey, model, system, user, json = false }) {
-  const body = {
-    model,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user }
-    ],
-    temperature: 0.1,
-    max_completion_tokens: 6000
-  };
-
-  if (json) body.response_format = { type: "json_object" };
-
-  const response = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": process.env.APP_URL || `http://localhost:${PORT}`,
-      "X-OpenRouter-Title": "Boucle Contradictoire"
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(180000)
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload?.error?.message || `Erreur OpenRouter ${response.status}`);
-
-  const content = payload?.choices?.[0]?.message?.content;
-  if (!content) throw new Error(`Réponse vide du modèle ${model}.`);
-
-  return {
-    content,
-    model: payload.model || model,
-    provider: payload.provider || null,
-    usage: payload.usage || {}
-  };
-}
-
-function parseJson(content, label) {
+passport.serializeUser((user, done) => done(null, user.id));
+passport.deserializeUser(async (id, done) => {
   try {
-    return JSON.parse(content);
-  } catch {
-    const match = content.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error(`${label} n'est pas un JSON valide.`);
-    return JSON.parse(match[0]);
-  }
+    if (!pool) return done(null, { id, email: "dev@local", name: "Développeur" });
+    const { rows } = await pool.query("SELECT id,email,name,picture FROM users WHERE id=$1", [id]);
+    done(null, rows[0] || false);
+  } catch (error) { done(error); }
+});
+
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  passport.use(new GoogleStrategy({ clientID: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET, callbackURL: `${APP_URL}/auth/google/callback` }, async (_a, _r, profile, done) => {
+    try {
+      const email = profile.emails?.[0]?.value;
+      if (!email) return done(new Error("Adresse e-mail Google absente."));
+      if (!pool) return done(null, { id: profile.id, email, name: profile.displayName, picture: profile.photos?.[0]?.value });
+      const { rows } = await pool.query(`INSERT INTO users (google_id,email,name,picture) VALUES ($1,$2,$3,$4) ON CONFLICT (google_id) DO UPDATE SET email=EXCLUDED.email,name=EXCLUDED.name,picture=EXCLUDED.picture,updated_at=NOW() RETURNING id,email,name,picture`, [profile.id, email, profile.displayName, profile.photos?.[0]?.value]);
+      done(null, rows[0]);
+    } catch (error) { done(error); }
+  }));
 }
 
-app.get("/api/health", (_req, res) => {
-  res.json({
-    ok: true,
-    hasOpenRouterKey: Boolean(process.env.OPENROUTER_API_KEY),
-    hasFirecrawlKey: Boolean(process.env.FIRECRAWL_API_KEY)
-  });
-});
+function devUser(req) { return process.env.DEV_BYPASS_AUTH === "true" ? { id: "00000000-0000-0000-0000-000000000001", email: "dev@local", name: "Développeur" } : req.user; }
+function requireAuth(req, res, next) { const user = devUser(req); if (!user) return res.status(401).json({ error: "Authentification Google requise." }); req.effectiveUser = user; next(); }
+app.get("/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
+app.get("/auth/google/callback", passport.authenticate("google", { failureRedirect: "/?auth=failed" }), (_req, res) => res.redirect("/"));
+app.post("/auth/logout", (req, res, next) => req.logout(error => error ? next(error) : req.session.destroy(() => res.json({ ok: true }))));
+app.get("/api/me", (req, res) => res.json({ user: devUser(req) || null, googleConfigured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) }));
 
-app.post("/api/review", async (req, res) => {
-  try {
-    const request = String(req.body?.request || "").trim();
-    if (request.length < 20) return res.status(400).json({ error: "La demande doit contenir au moins 20 caractères." });
+async function initDb() {
+  if (!pool) return;
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE TABLE IF NOT EXISTS users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),google_id text UNIQUE NOT NULL,email text NOT NULL,name text,picture text,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now()); CREATE TABLE IF NOT EXISTS runs (id uuid PRIMARY KEY,user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,request text NOT NULL,task_type text,status text NOT NULL,stop_reason text,writer_model text,auditor_model text,arbiter_model text,final_document text,result jsonb NOT NULL DEFAULT '{}'::jsonb,total_cost numeric(14,6) DEFAULT 0,prompt_tokens bigint DEFAULT 0,completion_tokens bigint DEFAULT 0,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now()); CREATE INDEX IF NOT EXISTS runs_user_created_idx ON runs(user_id,created_at DESC);`);
+}
 
-    const apiKey = process.env.OPENROUTER_API_KEY || req.body?.apiKey;
-    if (!apiKey) return res.status(400).json({ error: "Clé OpenRouter absente." });
+const writerSystem = `Tu es le rédacteur principal. Produis un document professionnel, structuré et directement exploitable. Sépare faits vérifiés, hypothèses, estimations et recommandations. Utilise les outils web lorsque les informations peuvent avoir changé. Toute affirmation factuelle importante doit être associée à une source identifiable. N'invente jamais de source. Si une information n'est pas confirmable, écris exactement : « Je ne peux pas confirmer cette information ».`;
+const auditorSystem = `Tu es un auditeur contradictoire indépendant. Vérifie le document contre la demande, le dossier de sources et les résultats de vérification Firecrawl. Réponds uniquement en JSON. Sois sévère avec les sources inaccessibles, secondaires lorsque des sources primaires existent, citations sans URL, dates incohérentes, calculs non reproductibles et affirmations non étayées.`;
+const arbiterSystem = `Tu es l'arbitre final indépendant. Tu ne réécris pas le document. Tu tranches entre la version finale et les audits en privilégiant les preuves vérifiables. Réponds uniquement en JSON avec decision, confiance, motifs, reserves et actions_requises.`;
 
-    const claudeModel = validateModel(req.body?.claudeModel, "Modèle rédacteur");
-    const auditorModel = validateModel(req.body?.auditorModel, "Modèle auditeur");
-    const arbiterModel = validateModel(req.body?.arbiterModel, "Modèle arbitre");
-    const maxCycles = Math.min(5, Math.max(1, Number(req.body?.maxCycles || 3)));
-    const minScore = Math.min(100, Math.max(50, Number(req.body?.minScore || 90)));
+function validateModel(value, label) { if (typeof value !== "string" || !/^[~a-zA-Z0-9_.:/-]{3,180}$/.test(value)) throw new Error(`${label} invalide.`); return value; }
+function detectTask(request) { const value = request.toLowerCase(); if (/code|bug|api|architecture|dévelop|script|github/.test(value)) return "technical"; if (/prix|coût|budget|finops|roi|économie|facturation/.test(value)) return "financial"; if (/contrat|juridique|loi|règlement|conformité/.test(value)) return "legal"; if (/actualité|récent|derni|aujourd|annonce|veille/.test(value)) return "current_research"; return "general_analysis"; }
+function selectModels(task, supplied = {}) {
+  const defaults = { technical:{writer:"~anthropic/claude-opus-latest",auditor:"openai/gpt-5.6-sol",arbiter:"~x-ai/grok-latest"}, financial:{writer:"~anthropic/claude-opus-latest",auditor:"openai/gpt-5.6-sol",arbiter:"~x-ai/grok-latest"}, legal:{writer:"~anthropic/claude-opus-latest",auditor:"openai/gpt-5.6-sol",arbiter:"~x-ai/grok-latest"}, current_research:{writer:"~anthropic/claude-sonnet-latest",auditor:"openai/gpt-5.6-sol",arbiter:"~x-ai/grok-latest"}, general_analysis:{writer:"~anthropic/claude-sonnet-latest",auditor:"~openai/gpt-latest",arbiter:"~x-ai/grok-latest"} }[task];
+  return { writer:supplied.writer?validateModel(supplied.writer,"Modèle rédacteur"):defaults.writer, auditor:supplied.auditor?validateModel(supplied.auditor,"Modèle auditeur"):defaults.auditor, arbiter:supplied.arbiter?validateModel(supplied.arbiter,"Modèle arbitre"):defaults.arbiter };
+}
+function emit(job, type, payload={}) { const event={type,at:new Date().toISOString(),...payload}; job.events.push(event); for(const res of job.clients) res.write(`event: ${type}\ndata: ${JSON.stringify(event)}\n\n`); }
+function usageOf(payload) { return { prompt_tokens:Number(payload?.prompt_tokens||0),completion_tokens:Number(payload?.completion_tokens||0),cost:Number(payload?.cost||0) }; }
+async function callOpenRouter({apiKey,model,system,user,json=false,web=true}) {
+  const body={model,messages:[{role:"system",content:system},{role:"user",content:user}],temperature:.1,max_completion_tokens:7000,provider:{allow_fallbacks:true,data_collection:"deny"}};
+  if(json) body.response_format={type:"json_object"};
+  if(web) body.tools=[{type:"openrouter:web_search",engine:"auto",search_context_size:"high",max_total_results:10}];
+  const response=await fetch(OPENROUTER_URL,{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json","HTTP-Referer":APP_URL,"X-OpenRouter-Title":"Boucle Contradictoire"},body:JSON.stringify(body),signal:AbortSignal.timeout(240000)});
+  const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload?.error?.message||`Erreur OpenRouter ${response.status}`); const message=payload?.choices?.[0]?.message; if(!message?.content) throw new Error(`Réponse vide du modèle ${model}.`); return {content:message.content,annotations:message.annotations||[],model:payload.model||model,provider:payload.provider||null,usage:usageOf(payload.usage)};
+}
+function parseJson(content,label){try{return JSON.parse(content);}catch{const match=content.match(/\{[\s\S]*\}/);if(!match)throw new Error(`${label} n'est pas un JSON valide.`);return JSON.parse(match[0]);}}
+function extractUrls(text){return [...new Set((String(text).match(/https?:\/\/[^\s)\]}>"']+/g)||[]).map(url=>url.replace(/[.,;:!?]+$/,"")))].slice(0,12);}
+function annotationSources(calls){const items=[];for(const call of calls)for(const a of call.annotations||[]){const c=a.url_citation||a;if(c.url)items.push({url:c.url,title:c.title||"",excerpt:c.content||"",origin:"openrouter"});}return [...new Map(items.map(item=>[item.url,item])).values()];}
+function sourceClass(url){try{const host=new URL(url).hostname.toLowerCase();if(/\.gov$|\.gouv\.fr$|\.europa\.eu$|\.int$/.test(host))return"primary_official";if(/docs\.|learn\.microsoft|developer\.|developers\.|openrouter\.ai|firecrawl\.dev/.test(host))return"primary_documentation";if(/reuters|apnews|afp|bbc|lemonde|ft\.com/.test(host))return"reputable_media";return"other";}catch{return"invalid";}}
+async function scrapeFirecrawl(url,apiKey){if(!apiKey)return{url,accessible:false,reason:"FIRECRAWL_API_KEY absente",sourceClass:sourceClass(url)};try{const response=await fetch(FIRECRAWL_URL,{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({url,formats:["markdown"],onlyMainContent:true,removeBase64Images:true,blockAds:true,timeout:45000,zeroDataRetention:true}),signal:AbortSignal.timeout(55000)});const payload=await response.json().catch(()=>({}));if(!response.ok||payload.success===false)return{url,accessible:false,reason:payload.error||`HTTP ${response.status}`,sourceClass:sourceClass(url)};const data=payload.data||payload;return{url,accessible:true,title:data.metadata?.title||"",description:data.metadata?.description||"",statusCode:data.metadata?.statusCode||200,markdown:String(data.markdown||"").slice(0,12000),sourceClass:sourceClass(url)};}catch(error){return{url,accessible:false,reason:error.message,sourceClass:sourceClass(url)};}}
+async function verifySources(document,calls,firecrawlKey,job){const sources=[...annotationSources(calls),...extractUrls(document).map(url=>({url,origin:"document"}))];const unique=[...new Map(sources.map(s=>[s.url,s])).values()].slice(0,10);const verified=[];for(let i=0;i<unique.length;i+=1){emit(job,"source",{message:`Vérification de la source ${i+1}/${unique.length}`,url:unique[i].url});verified.push({...unique[i],...(await scrapeFirecrawl(unique[i].url,firecrawlKey))});}return verified;}
+function auditPrompt(request,document,verifiedSources){return `DEMANDE INITIALE:\n${request}\n\nDOCUMENT À AUDITER:\n${document}\n\nDOSSIER DE SOURCES VÉRIFIÉES:\n${JSON.stringify(verifiedSources.map(s=>({url:s.url,accessible:s.accessible,title:s.title,sourceClass:s.sourceClass,reason:s.reason,excerpt:s.markdown?.slice(0,1800)})),null,2)}\n\nRetourne ce JSON strict : {"score_global":0,"scores":{"exactitude_factuelle":0,"qualite_sources":0,"calculs":0,"couverture":0,"coherence":0,"actualite":0},"decision":"CORRIGER|VALIDER","resume":"","anomalies":[{"categorie":"","gravite":"critique|elevee|moyenne|faible","probleme":"","preuve":"","correction_attendue":""}],"sources_non_verifiees":[],"nouveau_cycle_requis":true}. Chaque score est sur 100.`;}
+async function saveRun(userId,result,request,task,models){if(!pool||userId==="00000000-0000-0000-0000-000000000001")return;const promptTokens=result.calls.reduce((n,c)=>n+Number(c.usage?.prompt_tokens||0),0);const completionTokens=result.calls.reduce((n,c)=>n+Number(c.usage?.completion_tokens||0),0);await pool.query(`INSERT INTO runs (id,user_id,request,task_type,status,stop_reason,writer_model,auditor_model,arbiter_model,final_document,result,total_cost,prompt_tokens,completion_tokens) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[result.id,userId,request,task,result.status,result.stopReason,models.writer,models.auditor,models.arbiter,result.finalDocument,JSON.stringify(result),result.totalCost,promptTokens,completionTokens]);}
 
-    const result = { versions: [], audits: [], calls: [], totalCost: 0, status: "incomplete", arbitration: null };
+async function executeJob(job,user,body){const apiKey=process.env.OPENROUTER_API_KEY||body.apiKey;if(!apiKey)throw new Error("Clé OpenRouter absente.");const request=String(body.request||"").trim();if(request.length<20)throw new Error("La demande doit contenir au moins 20 caractères.");const task=body.autoModel===false?"manual":detectTask(request);const models=selectModels(task==="manual"?"general_analysis":task,{writer:body.writerModel,auditor:body.auditorModel,arbiter:body.arbiterModel});const maxCycles=Math.min(5,Math.max(1,Number(body.maxCycles||3)));const minScore=Math.min(100,Math.max(50,Number(body.minScore||90)));const result={id:job.id,request,taskType:task,models,versions:[],audits:[],calls:[],sources:[],totalCost:0,status:"running",createdAt:new Date().toISOString()};emit(job,"models",{message:"Modèles sélectionnés",task,models});emit(job,"progress",{step:"draft",percent:8,message:"Rédaction initiale avec recherche web"});const first=await callOpenRouter({apiKey,model:models.writer,system:writerSystem,user:request,web:true});let document=first.content;result.versions.push({cycle:0,content:document});result.calls.push({role:"redaction",...first});result.totalCost+=first.usage.cost;
+  for(let cycle=1;cycle<=maxCycles;cycle+=1){emit(job,"progress",{step:"sources",percent:12+cycle*12,message:`Cycle ${cycle} : vérification stricte des sources`});const verified=await verifySources(document,result.calls,process.env.FIRECRAWL_API_KEY,job);result.sources=verified;emit(job,"progress",{step:"audit",percent:22+cycle*14,message:`Cycle ${cycle} : audit détaillé`});const auditCall=await callOpenRouter({apiKey,model:models.auditor,system:auditorSystem,user:auditPrompt(request,document,verified),json:true,web:true});const audit=parseJson(auditCall.content,"L'audit");result.audits.push({cycle,...audit});result.calls.push({role:"audit",...auditCall});result.totalCost+=auditCall.usage.cost;emit(job,"audit",{cycle,score:audit.score_global,scores:audit.scores,anomalies:audit.anomalies?.length||0});const severe=(audit.anomalies||[]).some(a=>["critique","elevee"].includes(String(a.gravite||"").toLowerCase()));const inaccessible=(audit.sources_non_verifiees||[]).length>0;if(Number(audit.score_global||0)>=minScore&&!severe&&!inaccessible&&audit.nouveau_cycle_requis!==true)break;if(cycle===maxCycles){result.stopReason="Nombre maximal de cycles atteint avant arbitrage.";break;}emit(job,"progress",{step:"correction",percent:30+cycle*16,message:`Cycle ${cycle} : correction du document`});const correction=await callOpenRouter({apiKey,model:models.writer,system:writerSystem,user:`Corrige intégralement ce document selon l'audit. Conserve uniquement les affirmations suffisamment étayées.\n\nDEMANDE:\n${request}\n\nDOCUMENT:\n${document}\n\nAUDIT:\n${JSON.stringify(audit,null,2)}`,web:true});document=correction.content;result.versions.push({cycle,content:document});result.calls.push({role:"correction",...correction});result.totalCost+=correction.usage.cost;}
+  emit(job,"progress",{step:"arbiter",percent:92,message:"Arbitrage final indépendant par Grok"});const arbiterCall=await callOpenRouter({apiKey,model:models.arbiter,system:arbiterSystem,user:`DEMANDE:\n${request}\n\nDOCUMENT FINAL:\n${document}\n\nAUDITS:\n${JSON.stringify(result.audits,null,2)}\n\nSOURCES:\n${JSON.stringify(result.sources.map(s=>({url:s.url,accessible:s.accessible,sourceClass:s.sourceClass})),null,2)}\n\nJSON attendu : {"decision":"APPROUVE|APPROUVE_AVEC_RESERVES|REJETE","confiance":0,"motifs":[],"reserves":[],"actions_requises":[]}`,json:true,web:true});const arbitration=parseJson(arbiterCall.content,"L'arbitrage");result.calls.push({role:"arbitrage",...arbiterCall});result.totalCost+=arbiterCall.usage.cost;result.arbitration=arbitration;result.finalDocument=document;result.status=arbitration.decision==="APPROUVE"?"validated":arbitration.decision==="APPROUVE_AVEC_RESERVES"?"validated_with_reservations":"rejected_by_arbiter";result.stopReason=result.stopReason||`Décision de l'arbitre : ${arbitration.decision}`;await saveRun(user.id,result,request,task,models);job.result=result;job.status="complete";emit(job,"complete",{percent:100,message:"Analyse terminée",result});}
 
-    const first = await callOpenRouter({ apiKey, model: claudeModel, system: writerSystem, user: request });
-    let document = first.content;
-    result.versions.push({ cycle: 0, content: document });
-    result.calls.push({ role: "redaction", model: first.model, provider: first.provider, usage: first.usage });
-    result.totalCost += Number(first.usage?.cost || 0);
+app.get("/api/health",async(_req,res)=>{let database=false;if(pool){try{await pool.query("SELECT 1");database=true;}catch{}}res.json({ok:true,database,hasOpenRouterKey:Boolean(process.env.OPENROUTER_API_KEY),hasFirecrawlKey:Boolean(process.env.FIRECRAWL_API_KEY),googleAuth:Boolean(process.env.GOOGLE_CLIENT_ID)});});
+app.post("/api/jobs",requireAuth,async(req,res)=>{const id=uuidv4();const job={id,userId:req.effectiveUser.id,events:[],clients:new Set(),status:"queued",result:null};jobs.set(id,job);res.status(202).json({id});executeJob(job,req.effectiveUser,req.body).catch(error=>{job.status="error";job.error=error.message;emit(job,"error",{message:error.message});});});
+app.get("/api/jobs/:id/events",requireAuth,(req,res)=>{const job=jobs.get(req.params.id);if(!job||job.userId!==req.effectiveUser.id)return res.status(404).end();res.setHeader("Content-Type","text/event-stream");res.setHeader("Cache-Control","no-cache");res.setHeader("Connection","keep-alive");res.flushHeaders();for(const event of job.events)res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);job.clients.add(res);const ping=setInterval(()=>res.write(": ping\n\n"),20000);req.on("close",()=>{clearInterval(ping);job.clients.delete(res);});});
+app.get("/api/history",requireAuth,async(req,res)=>{if(!pool||req.effectiveUser.id.startsWith("00000000"))return res.json({runs:[...jobs.values()].filter(j=>j.userId===req.effectiveUser.id&&j.result).map(j=>j.result).reverse()});const{rows}=await pool.query("SELECT id,request,task_type,status,total_cost,prompt_tokens,completion_tokens,created_at,result->'arbitration' AS arbitration FROM runs WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100",[req.effectiveUser.id]);res.json({runs:rows});});
+function buildDashboard(runs){const byModel={};let cost=0,prompt=0,completion=0;for(const run of runs)for(const call of run.calls||[]){const key=call.model||"unknown",u=call.usage||{};byModel[key]||={model:key,calls:0,cost:0,promptTokens:0,completionTokens:0};byModel[key].calls+=1;byModel[key].cost+=Number(u.cost||0);byModel[key].promptTokens+=Number(u.prompt_tokens||0);byModel[key].completionTokens+=Number(u.completion_tokens||0);cost+=Number(u.cost||0);prompt+=Number(u.prompt_tokens||0);completion+=Number(u.completion_tokens||0);}return{totals:{runs:runs.length,cost,promptTokens:prompt,completionTokens:completion,validated:runs.filter(r=>String(r.status).startsWith("validated")).length},byModel:Object.values(byModel).sort((a,b)=>b.cost-a.cost)};}
+app.get("/api/dashboard",requireAuth,async(req,res)=>{if(!pool||req.effectiveUser.id.startsWith("00000000")){const runs=[...jobs.values()].filter(j=>j.userId===req.effectiveUser.id&&j.result).map(j=>j.result);return res.json(buildDashboard(runs));}const{rows}=await pool.query("SELECT status,total_cost,prompt_tokens,completion_tokens,created_at,result FROM runs WHERE user_id=$1 AND created_at > now()-interval '90 days'",[req.effectiveUser.id]);res.json(buildDashboard(rows.map(r=>({...r.result,status:r.status,totalCost:Number(r.total_cost),createdAt:r.created_at,calls:r.result.calls||[]}))));});
+async function getRun(req){const inMemory=jobs.get(req.params.id)?.result;if(inMemory&&jobs.get(req.params.id).userId===req.effectiveUser.id)return inMemory;if(!pool)return null;const{rows}=await pool.query("SELECT result FROM runs WHERE id=$1 AND user_id=$2",[req.params.id,req.effectiveUser.id]);return rows[0]?.result||null;}
+function safeName(value){return String(value||"boucle-contradictoire").replace(/[^a-z0-9_-]+/gi,"-").slice(0,60);}
+app.get("/api/runs/:id/export/:format",requireAuth,async(req,res)=>{const run=await getRun(req);if(!run)return res.status(404).json({error:"Exécution introuvable."});const format=req.params.format,base=safeName(`boucle-${run.id}`);if(format==="md"){res.attachment(`${base}.md`).type("text/markdown").send(`# Boucle contradictoire\n\n${run.finalDocument}\n\n## Arbitrage\n\n\`\`\`json\n${JSON.stringify(run.arbitration,null,2)}\n\`\`\`\n`);return;}if(format==="pdf"){res.attachment(`${base}.pdf`).type("application/pdf");const doc=new PDFDocument({margin:50});doc.pipe(res);doc.fontSize(20).text("Boucle contradictoire");doc.moveDown().fontSize(11).text(run.finalDocument);doc.addPage().fontSize(16).text("Arbitrage");doc.fontSize(10).text(JSON.stringify(run.arbitration,null,2));doc.end();return;}if(format==="docx"){const children=[new Paragraph({text:"Boucle contradictoire",heading:HeadingLevel.TITLE}),...String(run.finalDocument).split(/\n+/).map(text=>new Paragraph(text)),new Paragraph({text:"Arbitrage",heading:HeadingLevel.HEADING_1}),new Paragraph(JSON.stringify(run.arbitration,null,2))];const buffer=await Packer.toBuffer(new Document({sections:[{children}]}));res.attachment(`${base}.docx`).type("application/vnd.openxmlformats-officedocument.wordprocessingml.document").send(buffer);return;}if(format==="xlsx"){const wb=new ExcelJS.Workbook(),summary=wb.addWorksheet("Synthèse");summary.addRows([["Champ","Valeur"],["Statut",run.status],["Coût",run.totalCost],["Modèle rédacteur",run.models?.writer],["Modèle auditeur",run.models?.auditor],["Modèle arbitre",run.models?.arbiter]]);const scores=wb.addWorksheet("Scores");scores.addRow(["Cycle","Global","Exactitude","Sources","Calculs","Couverture","Cohérence","Actualité"]);for(const a of run.audits||[])scores.addRow([a.cycle,a.score_global,a.scores?.exactitude_factuelle,a.scores?.qualite_sources,a.scores?.calculs,a.scores?.couverture,a.scores?.coherence,a.scores?.actualite]);const usage=wb.addWorksheet("Consommation");usage.addRow(["Rôle","Modèle","Tokens entrée","Tokens sortie","Coût"]);for(const c of run.calls||[])usage.addRow([c.role,c.model,c.usage?.prompt_tokens,c.usage?.completion_tokens,c.usage?.cost]);const buffer=await wb.xlsx.writeBuffer();res.attachment(`${base}.xlsx`).type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").send(Buffer.from(buffer));return;}res.status(400).json({error:"Format non pris en charge."});});
 
-    for (let cycle = 1; cycle <= maxCycles; cycle += 1) {
-      const auditCall = await callOpenRouter({
-        apiKey,
-        model: auditorModel,
-        system: auditorSystem,
-        user: `DEMANDE INITIALE:\n${request}\n\nDOCUMENT À AUDITER:\n${document}`,
-        json: true
-      });
-      const audit = parseJson(auditCall.content, "L'audit");
-      result.audits.push({ cycle, ...audit });
-      result.calls.push({ role: "audit", model: auditCall.model, provider: auditCall.provider, usage: auditCall.usage });
-      result.totalCost += Number(auditCall.usage?.cost || 0);
-
-      const severe = (audit.anomalies || []).some(a => ["critique", "elevee", "élevée"].includes(String(a.gravite || "").toLowerCase()));
-      if (Number(audit.score_global || 0) >= minScore && !severe && audit.nouveau_cycle_requis !== true) {
-        result.status = "ready_for_arbitration";
-        result.stopReason = "Critères d'audit atteints ; passage à l'arbitrage final.";
-        break;
-      }
-
-      if (cycle === maxCycles) {
-        result.status = "ready_for_arbitration";
-        result.stopReason = "Nombre maximal de cycles atteint ; passage à l'arbitrage final.";
-        break;
-      }
-
-      const correction = await callOpenRouter({
-        apiKey,
-        model: claudeModel,
-        system: writerSystem,
-        user: `Corrige intégralement le document en tenant compte de cet audit.\n\nDEMANDE:\n${request}\n\nDOCUMENT:\n${document}\n\nAUDIT:\n${JSON.stringify(audit, null, 2)}`
-      });
-      document = correction.content;
-      result.versions.push({ cycle, content: document });
-      result.calls.push({ role: "correction", model: correction.model, provider: correction.provider, usage: correction.usage });
-      result.totalCost += Number(correction.usage?.cost || 0);
-    }
-
-    const arbitrationCall = await callOpenRouter({
-      apiKey,
-      model: arbiterModel,
-      system: arbiterSystem,
-      user: `DEMANDE INITIALE:\n${request}\n\nDOCUMENT FINAL:\n${document}\n\nHISTORIQUE DES AUDITS:\n${JSON.stringify(result.audits, null, 2)}`,
-      json: true
-    });
-    const arbitration = parseJson(arbitrationCall.content, "L'arbitrage");
-    result.arbitration = arbitration;
-    result.calls.push({ role: "arbitrage", model: arbitrationCall.model, provider: arbitrationCall.provider, usage: arbitrationCall.usage });
-    result.totalCost += Number(arbitrationCall.usage?.cost || 0);
-
-    const decision = String(arbitration.decision || "").toUpperCase();
-    if (decision === "APPROUVE") result.status = "validated";
-    else if (decision === "APPROUVE_AVEC_RESERVES") result.status = "validated_with_reservations";
-    else result.status = "rejected_by_arbiter";
-
-    result.finalDocument = document;
-    res.json(result);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error instanceof Error ? error.message : "Erreur interne." });
-  }
-});
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Boucle Contradictoire disponible sur le port ${PORT}`);
-});
+app.use(express.static(path.join(__dirname,"public")));
+app.get("/{*path}",(_req,res)=>res.sendFile(path.join(__dirname,"public","index.html")));
+await initDb();
+app.listen(PORT,"0.0.0.0",()=>console.log(`Boucle Contradictoire disponible sur ${PORT}`));
