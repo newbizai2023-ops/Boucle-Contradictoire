@@ -1,6 +1,6 @@
 const $ = s => document.querySelector(s);
 let currentRunId = null;
-const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
 async function json(url, options) { const r = await fetch(url, options); const d = await r.json().catch(()=>({})); if (!r.ok) throw new Error(d.error || `Erreur ${r.status}`); return d; }
 async function init() {
   const [me, health] = await Promise.all([json('/api/me'), json('/api/health')]);
@@ -17,23 +17,44 @@ async function init() {
   await Promise.all([loadHistory(), loadDashboard()]);
 }
 $('#autoModel').addEventListener('change', e => $('#models').classList.toggle('disabled', e.target.checked));
+$('#files').addEventListener('change', renderSelectedFiles);
+function renderSelectedFiles(){
+  const files=[...$('#files').files];
+  $('#fileList').innerHTML=files.map(file=>`<span class="file-chip">${esc(file.name)} · ${(file.size/1024/1024).toFixed(2)} Mo</span>`).join('');
+}
 $('#reviewForm').addEventListener('submit', async event => {
   event.preventDefault(); $('#error').hidden = true; $('#submitButton').disabled = true; $('#submitButton').textContent='Initialisation…';
-  const payload = { request:$('#request').value, autoModel:$('#autoModel').checked, writerModel:$('#writerModel').value.trim()||undefined, auditorModel:$('#auditorModel').value.trim()||undefined, arbiterModel:$('#arbiterModel').value.trim()||undefined, maxCycles:Number($('#maxCycles').value), minScore:Number($('#minScore').value), apiKey:$('#apiKey').value.trim()||undefined };
+  const formData = new FormData();
+  formData.append('request',$('#request').value);
+  formData.append('autoModel',String($('#autoModel').checked));
+  formData.append('writerModel',$('#writerModel').value.trim());
+  formData.append('auditorModel',$('#auditorModel').value.trim());
+  formData.append('arbiterModel',$('#arbiterModel').value.trim());
+  formData.append('maxCycles',$('#maxCycles').value);
+  formData.append('minScore',$('#minScore').value);
+  formData.append('apiKey',$('#apiKey').value.trim());
+  [...$('#files').files].forEach(file=>formData.append('files',file));
   try {
-    const { id } = await json('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); currentRunId=id; watchJob(id);
-    $('#empty').hidden=true; $('#results').hidden=true; $('#progressPanel').hidden=false; $('#timeline').innerHTML=''; setProgress(1,'Tâche créée');
+    const { id } = await json('/api/jobs',{method:'POST',body:formData}); currentRunId=id; watchJob(id);
+    $('#empty').hidden=true; $('#results').hidden=true; $('#progressPanel').hidden=false; $('#analysisPanel').hidden=false; $('#timeline').innerHTML=''; $('#analysisFeed').innerHTML=''; setProgress(1,'Tâche créée');
   } catch(error) { showError(error); resetButton(); }
 });
 function watchJob(id) {
   const es = new EventSource(`/api/jobs/${id}/events`);
   const add = e => { const d=JSON.parse(e.data); addTimeline(d.message || d.type); if (d.percent) setProgress(d.percent,d.message); };
   ['progress','models','source','audit'].forEach(type=>es.addEventListener(type,add));
+  es.addEventListener('insight', e=>{ const d=JSON.parse(e.data); addAnalysis(d); });
   es.addEventListener('complete', e=>{ es.close(); const d=JSON.parse(e.data); renderResult(d.result); setProgress(100,'Terminé'); resetButton(); loadHistory(); loadDashboard(); });
-  es.addEventListener('error', e=>{ if(e.data){ const d=JSON.parse(e.data); showError(new Error(d.message)); } es.close(); resetButton(); });
+  es.addEventListener('error', e=>{ if(e.data){ const d=JSON.parse(e.data); showError(new Error(d.message)); addAnalysis({category:'error',message:d.message}); } es.close(); resetButton(); });
 }
 function setProgress(p,t){ $('#progressBar').style.width=`${Math.min(100,p)}%`; $('#progressText').textContent=t||''; }
 function addTimeline(text){ const li=document.createElement('li'); li.textContent=text; $('#timeline').append(li); }
+function addAnalysis(data){
+  const article=document.createElement('article'); article.className=`analysis-entry ${data.category||'general'}`;
+  const time=new Date(data.at||Date.now()).toLocaleTimeString();
+  article.innerHTML=`<div><span>${esc(data.category||'analyse')}</span><time>${esc(time)}</time></div><p>${esc(data.message||'')}</p>${data.details?`<details><summary>Détails</summary><pre>${esc(JSON.stringify(data.details,null,2))}</pre></details>`:''}`;
+  $('#analysisFeed').append(article); article.scrollIntoView({block:'nearest'});
+}
 function resetButton(){ $('#submitButton').disabled=false; $('#submitButton').textContent='Lancer la boucle'; }
 function showError(error){ $('#error').textContent=error.message; $('#error').hidden=false; }
 function renderResult(data){
