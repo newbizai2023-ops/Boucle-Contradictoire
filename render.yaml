@@ -11,7 +11,7 @@ services:
     runtime: node
     region: frankfurt
     plan: starter
-    buildCommand: npm ci
+    buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /api/health
     autoDeploy: true
