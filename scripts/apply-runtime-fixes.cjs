@@ -1,7 +1,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const serverPath = path.join(__dirname, '..', 'server.js');
+const root = path.join(__dirname, '..');
+const serverPath = path.join(root, 'server.js');
+const packagePath = path.join(root, 'package.json');
+const release = JSON.parse(fs.readFileSync(packagePath, 'utf8')).version;
 let source = fs.readFileSync(serverPath, 'utf8');
 let changes = 0;
 
@@ -30,5 +33,13 @@ if (source.includes(errorBefore)) {
   changes += 1;
 }
 
+// Le numéro de release est lu dans package.json et exposé par /api/health.
+const releasePattern = /res\.json\(\{ok:true,(?:release:"[^"]+",)?database,/;
+const releaseReplacement = `res.json({ok:true,release:"${release}",database,`;
+if (releasePattern.test(source)) {
+  source = source.replace(releasePattern, releaseReplacement);
+  changes += 1;
+}
+
 fs.writeFileSync(serverPath, source, 'utf8');
-console.log(`Correctifs d'exécution appliqués : ${changes}`);
+console.log(`Correctifs d'exécution appliqués : ${changes} · release ${release}`);
