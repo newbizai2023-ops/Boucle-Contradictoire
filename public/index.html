@@ -1,5 +1,5 @@
 <!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Boucle Contradictoire</title><link rel="stylesheet" href="/styles.css"></head>
-<body><header><div><p class="eyebrow">ORCHESTRATION MULTI-MODÈLES</p><h1>Boucle Contradictoire</h1><p>Claude rédige, GPT audite, Grok arbitre — avec recherche web, contrôle Firecrawl et traçabilité.</p></div><div class="header-actions"><span id="health" class="badge">Vérification…</span><div id="auth"></div></div></header>
+<body><header><div><p class="eyebrow">ORCHESTRATION MULTI-MODÈLES</p><h1>Boucle Contradictoire</h1><p>Claude rédige, GPT audite, Grok arbitre — avec recherche web, contrôle Firecrawl et traçabilité.</p></div><div class="header-actions"><span id="release" class="badge">Release…</span><span id="health" class="badge">Vérification…</span><div id="auth"></div></div></header>
 <main id="app" hidden>
 <section class="panel form-panel"><form id="reviewForm"><label for="request">Demande à traiter</label><textarea id="request" required minlength="20" placeholder="Décris l’étude, l’analyse ou le document à produire…"></textarea>
 <div class="inline"><label class="switch"><input id="autoModel" type="checkbox" checked> Sélection automatique des modèles</label></div>
@@ -15,4 +15,4 @@
 <section id="scores" class="tab-panel"></section><section id="sources" class="tab-panel"></section><section id="audits" class="tab-panel"></section><section id="usage" class="tab-panel"></section></div></section>
 <section class="panel full"><div class="section-title"><h2>Historique</h2><button id="refreshHistory" class="secondary">Actualiser</button></div><div id="history"></div></section>
 <section class="panel full"><h2>Tableau de bord de consommation</h2><div id="dashboard"></div></section>
-</main><footer>Aucune clé API réelle n’est incluse dans le dépôt.</footer><script type="module" src="/app.js"></script></body></html>
+</main><footer>Aucune clé API réelle n’est incluse dans le dépôt. · <span id="releaseFooter">Release…</span></footer><script type="module" src="/app.js"></script><script>fetch('/api/health').then(r=>r.json()).then(h=>{const label=`Release v${h.release||'inconnue'}`;document.getElementById('release').textContent=label;document.getElementById('releaseFooter').textContent=label;}).catch(()=>{});</script></body></html>
