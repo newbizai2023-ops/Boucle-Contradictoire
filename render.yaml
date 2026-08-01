@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: boucle-contradictoire
+    runtime: node
+    region: frankfurt
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: FIRECRAWL_API_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
