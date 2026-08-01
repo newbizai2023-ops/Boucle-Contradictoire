@@ -1,117 +1,55 @@
-const form = document.querySelector('#reviewForm');
-const button = document.querySelector('#submitButton');
-const errorBox = document.querySelector('#error');
-const empty = document.querySelector('#empty');
-const results = document.querySelector('#results');
-const finalDocument = document.querySelector('#finalDocument');
-
-async function checkHealth() {
-  const badge = document.querySelector('#health');
-  try {
-    const response = await fetch('/api/health');
-    const data = await response.json();
-    badge.textContent = data.hasOpenRouterKey ? 'Serveur prêt' : 'Clé serveur absente';
-    badge.className = `badge ${data.hasOpenRouterKey ? 'ok' : 'warn'}`;
-    document.querySelector('#keyDetails').open = !data.hasOpenRouterKey;
-  } catch {
-    badge.textContent = 'Serveur indisponible';
-    badge.className = 'badge warn';
+const $ = s => document.querySelector(s);
+let currentRunId = null;
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function json(url, options) { const r = await fetch(url, options); const d = await r.json().catch(()=>({})); if (!r.ok) throw new Error(d.error || `Erreur ${r.status}`); return d; }
+async function init() {
+  const [me, health] = await Promise.all([json('/api/me'), json('/api/health')]);
+  $('#health').textContent = health.ok ? `Serveur prêt${health.database?' · DB':''}${health.hasFirecrawlKey?' · Firecrawl':''}` : 'Serveur indisponible';
+  $('#health').className = `badge ${health.ok?'ok':'warn'}`;
+  if (!me.user) {
+    $('#auth').innerHTML = me.googleConfigured ? '<a class="login" href="/auth/google">Se connecter avec Google</a>' : '<span class="badge warn">OAuth Google non configuré</span>';
+    return;
   }
+  $('#auth').innerHTML = `<span>${esc(me.user.name || me.user.email)}</span> <button id="logout" class="secondary">Déconnexion</button>`;
+  $('#logout').onclick = async()=>{ await json('/auth/logout',{method:'POST'}); location.reload(); };
+  $('#app').hidden = false;
+  $('#keyDetails').open = !health.hasOpenRouterKey;
+  await Promise.all([loadHistory(), loadDashboard()]);
 }
-
-function renderAudit(audit) {
-  const anomalies = (audit.anomalies || []).map(item => `
-    <article class="issue ${String(item.gravite || '').toLowerCase()}">
-      <header><strong>${item.gravite || 'Anomalie'}</strong></header>
-      <p>${item.probleme || ''}</p>
-      <p><b>Correction :</b> ${item.correction_attendue || ''}</p>
-    </article>`).join('');
-
-  return `<section class="audit-card">
-    <h3>Cycle ${audit.cycle} — score ${audit.score_global ?? '—'}/100</h3>
-    <p>${audit.resume || ''}</p>
-    ${anomalies || '<p>Aucune anomalie détaillée.</p>'}
-  </section>`;
-}
-
-function renderArbitration(arbitration) {
-  if (!arbitration) return '<p>Aucun arbitrage retourné.</p>';
-  const reserves = (arbitration.reserves || []).map(item => `<li>${item}</li>`).join('');
-  return `<section class="audit-card">
-    <h3>${arbitration.decision || 'Décision indisponible'} — ${arbitration.score_final ?? '—'}/100</h3>
-    <p>${arbitration.justification || ''}</p>
-    ${reserves ? `<h4>Réserves</h4><ul>${reserves}</ul>` : '<p>Aucune réserve déclarée.</p>'}
-    <p><b>Action recommandée :</b> ${arbitration.action_recommandee || '—'}</p>
-  </section>`;
-}
-
-function renderUsage(calls) {
-  if (!calls.length) return '<p>Aucun appel enregistré.</p>';
-  return `<div class="table-wrap"><table>
-    <thead><tr><th>Rôle</th><th>Modèle</th><th>Entrée</th><th>Sortie</th><th>Coût</th></tr></thead>
-    <tbody>${calls.map(call => `<tr>
-      <td>${call.role}</td>
-      <td>${call.model}</td>
-      <td>${call.usage?.prompt_tokens || 0}</td>
-      <td>${call.usage?.completion_tokens || 0}</td>
-      <td>$${Number(call.usage?.cost || 0).toFixed(4)}</td>
-    </tr>`).join('')}</tbody>
-  </table></div>`;
-}
-
-form.addEventListener('submit', async event => {
-  event.preventDefault();
-  errorBox.hidden = true;
-  button.disabled = true;
-  button.textContent = 'Boucle en cours…';
-
-  const payload = {
-    request: document.querySelector('#request').value,
-    claudeModel: document.querySelector('#claudeModel').value.trim(),
-    auditorModel: document.querySelector('#auditorModel').value.trim(),
-    arbiterModel: document.querySelector('#arbiterModel').value.trim(),
-    maxCycles: Number(document.querySelector('#maxCycles').value),
-    minScore: Number(document.querySelector('#minScore').value),
-    apiKey: document.querySelector('#apiKey').value.trim() || undefined
-  };
-
+$('#autoModel').addEventListener('change', e => $('#models').classList.toggle('disabled', e.target.checked));
+$('#reviewForm').addEventListener('submit', async event => {
+  event.preventDefault(); $('#error').hidden = true; $('#submitButton').disabled = true; $('#submitButton').textContent='Initialisation…';
+  const payload = { request:$('#request').value, autoModel:$('#autoModel').checked, writerModel:$('#writerModel').value.trim()||undefined, auditorModel:$('#auditorModel').value.trim()||undefined, arbiterModel:$('#arbiterModel').value.trim()||undefined, maxCycles:Number($('#maxCycles').value), minScore:Number($('#minScore').value), apiKey:$('#apiKey').value.trim()||undefined };
   try {
-    const response = await fetch('/api/review', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Erreur inattendue.');
-
-    empty.hidden = true;
-    results.hidden = false;
-    document.querySelector('#status').textContent = data.status || '—';
-    document.querySelector('#score').textContent = data.arbitration?.score_final ?? data.audits?.at(-1)?.score_global ?? '—';
-    document.querySelector('#calls').textContent = data.calls?.length || 0;
-    document.querySelector('#cost').textContent = `$${Number(data.totalCost || 0).toFixed(4)}`;
-    finalDocument.textContent = data.finalDocument || '';
-    document.querySelector('#audits').innerHTML = (data.audits || []).map(renderAudit).join('') || '<p>Aucun audit.</p>';
-    document.querySelector('#arbitration').innerHTML = renderArbitration(data.arbitration);
-    document.querySelector('#usage').innerHTML = renderUsage(data.calls || []);
-  } catch (error) {
-    errorBox.textContent = error.message;
-    errorBox.hidden = false;
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Lancer la boucle';
-  }
+    const { id } = await json('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); currentRunId=id; watchJob(id);
+    $('#empty').hidden=true; $('#results').hidden=true; $('#progressPanel').hidden=false; $('#timeline').innerHTML=''; setProgress(1,'Tâche créée');
+  } catch(error) { showError(error); resetButton(); }
 });
-
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(item => item.classList.toggle('active', item === tab));
-    document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.toggle('active', panel.id === tab.dataset.tab));
-  });
-});
-
-document.querySelector('#copy').addEventListener('click', async () => {
-  await navigator.clipboard.writeText(finalDocument.textContent);
-});
-
-checkHealth();
+function watchJob(id) {
+  const es = new EventSource(`/api/jobs/${id}/events`);
+  const add = e => { const d=JSON.parse(e.data); addTimeline(d.message || d.type); if (d.percent) setProgress(d.percent,d.message); };
+  ['progress','models','source','audit'].forEach(type=>es.addEventListener(type,add));
+  es.addEventListener('complete', e=>{ es.close(); const d=JSON.parse(e.data); renderResult(d.result); setProgress(100,'Terminé'); resetButton(); loadHistory(); loadDashboard(); });
+  es.addEventListener('error', e=>{ if(e.data){ const d=JSON.parse(e.data); showError(new Error(d.message)); } es.close(); resetButton(); });
+}
+function setProgress(p,t){ $('#progressBar').style.width=`${Math.min(100,p)}%`; $('#progressText').textContent=t||''; }
+function addTimeline(text){ const li=document.createElement('li'); li.textContent=text; $('#timeline').append(li); }
+function resetButton(){ $('#submitButton').disabled=false; $('#submitButton').textContent='Lancer la boucle'; }
+function showError(error){ $('#error').textContent=error.message; $('#error').hidden=false; }
+function renderResult(data){
+  $('#progressPanel').hidden=true; $('#results').hidden=false; currentRunId=data.id;
+  $('#status').textContent=data.status; const last=data.audits?.at(-1); $('#score').textContent=last?.score_global??'—'; $('#calls').textContent=data.calls?.length||0; $('#cost').textContent=`$${Number(data.totalCost||0).toFixed(4)}`; $('#finalDocument').textContent=data.finalDocument||'';
+  $('#arbitration').innerHTML=`<h3>Arbitrage Grok</h3><pre>${esc(JSON.stringify(data.arbitration,null,2))}</pre>`;
+  $('#audits').innerHTML=(data.audits||[]).map(a=>`<article class="audit-card"><h3>Cycle ${a.cycle} — ${a.score_global}/100</h3><p>${esc(a.resume||'')}</p>${(a.anomalies||[]).map(x=>`<div class="issue ${esc(x.gravite)}"><b>${esc(x.categorie)} · ${esc(x.gravite)}</b><p>${esc(x.probleme)}</p><small>${esc(x.correction_attendue)}</small></div>`).join('')}</article>`).join('');
+  $('#scores').innerHTML=renderScores(data.audits||[]); $('#sources').innerHTML=renderSources(data.sources||[]); $('#usage').innerHTML=renderUsage(data.calls||[]);
+  document.querySelectorAll('[data-export]').forEach(a=>{ a.href=`/api/runs/${data.id}/export/${a.dataset.export}`; });
+}
+function renderScores(audits){ const keys=['exactitude_factuelle','qualite_sources','calculs','couverture','coherence','actualite']; return `<div class="table-wrap"><table><thead><tr><th>Cycle</th><th>Global</th>${keys.map(k=>`<th>${k.replaceAll('_',' ')}</th>`).join('')}</tr></thead><tbody>${audits.map(a=>`<tr><td>${a.cycle}</td><td>${a.score_global}</td>${keys.map(k=>`<td>${a.scores?.[k]??'—'}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`; }
+function renderSources(sources){ return sources.length?`<div class="source-grid">${sources.map(s=>`<article class="source ${s.accessible?'ok':'bad'}"><b>${esc(s.title||s.url)}</b><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a><p>${s.accessible?'Accessible et extraite par Firecrawl':`Non vérifiée : ${esc(s.reason)}`}</p><small>${esc(s.sourceClass)}</small></article>`).join('')}</div>`:'<p>Aucune source détectée.</p>'; }
+function renderUsage(calls){ return `<div class="table-wrap"><table><thead><tr><th>Rôle</th><th>Modèle</th><th>Entrée</th><th>Sortie</th><th>Coût</th></tr></thead><tbody>${calls.map(c=>`<tr><td>${esc(c.role)}</td><td>${esc(c.model)}</td><td>${c.usage?.prompt_tokens||0}</td><td>${c.usage?.completion_tokens||0}</td><td>$${Number(c.usage?.cost||0).toFixed(4)}</td></tr>`).join('')}</tbody></table></div>`; }
+async function loadHistory(){ const {runs}=await json('/api/history'); $('#history').innerHTML=runs.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Demande</th><th>Type</th><th>Statut</th><th>Coût</th></tr></thead><tbody>${runs.map(r=>`<tr><td>${new Date(r.created_at||r.createdAt||Date.now()).toLocaleString()}</td><td>${esc((r.request||'').slice(0,90))}</td><td>${esc(r.task_type||r.taskType||'')}</td><td>${esc(r.status)}</td><td>$${Number(r.total_cost||r.totalCost||0).toFixed(4)}</td></tr>`).join('')}</tbody></table></div>`:'<p>Aucun historique.</p>'; }
+async function loadDashboard(){ const d=await json('/api/dashboard'); $('#dashboard').innerHTML=`<div class="metrics"><article><span>Exécutions</span><strong>${d.totals.runs}</strong></article><article><span>Validées</span><strong>${d.totals.validated}</strong></article><article><span>Coût total</span><strong>$${Number(d.totals.cost).toFixed(4)}</strong></article><article><span>Tokens</span><strong>${(d.totals.promptTokens+d.totals.completionTokens).toLocaleString()}</strong></article></div>${renderUsage(d.byModel.map(m=>({role:`${m.calls} appels`,model:m.model,usage:{prompt_tokens:m.promptTokens,completion_tokens:m.completionTokens,cost:m.cost}})))}`; }
+$('#refreshHistory').onclick=()=>Promise.all([loadHistory(),loadDashboard()]);
+$('#copy').onclick=()=>navigator.clipboard.writeText($('#finalDocument').textContent);
+document.querySelectorAll('.tab').forEach(tab=>tab.onclick=()=>{ document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===tab)); document.querySelectorAll('.tab-panel').forEach(x=>x.classList.toggle('active',x.id===tab.dataset.tab)); });
+init().catch(showError);
