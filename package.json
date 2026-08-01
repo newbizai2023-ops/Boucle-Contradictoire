@@ -1,17 +1,25 @@
 {
-  "name": "ai-review-loop-openrouter",
-  "version": "1.0.0",
+  "name": "boucle-contradictoire",
+  "version": "2.0.0",
   "private": true,
-  "description": "Boucle de rédaction Claude et audit ChatGPT via OpenRouter",
+  "description": "Boucle contradictoire multi-modèles avec recherche web, arbitrage, historique et exports",
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "check": "node --check server.js && node --check public/app.js"
   },
-  "engines": {
-    "node": ">=18"
-  },
+  "engines": { "node": ">=20" },
   "dependencies": {
-    "express": "^5.1.0"
+    "connect-pg-simple": "^10.0.0",
+    "docx": "^9.5.1",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "express-session": "^1.18.1",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "pdfkit": "^0.17.1",
+    "pg": "^8.16.3",
+    "uuid": "^11.1.0"
   }
 }
