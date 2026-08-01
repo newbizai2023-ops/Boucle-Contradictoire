@@ -11,12 +11,14 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 app.use(express.json({ limit: "4mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-const writerSystem = `Tu es le rédacteur principal d'une étude professionnelle. Distingue faits vérifiés, hypothèses, estimations et recommandations. Cite des sources identifiables. N'invente jamais une source, un tarif ou une fonctionnalité. Lorsque tu ne peux pas vérifier une information, écris exactement : « Je ne peux pas confirmer cette information ».`;
+const writerSystem = `Tu es le rédacteur principal d'une étude professionnelle. Produis un document clair, structuré et exploitable. Distingue systématiquement faits vérifiés, hypothèses, estimations et recommandations. Cite des sources identifiables. N'invente jamais une source, un tarif ou une fonctionnalité. Lorsque tu ne peux pas vérifier une information, écris exactement : « Je ne peux pas confirmer cette information ».`;
 
-const auditorSystem = `Tu es un auditeur contradictoire indépendant. Vérifie les faits, sources, dates, calculs, unités et conclusions. Réponds uniquement en JSON avec les champs score_global, decision, resume, anomalies et nouveau_cycle_requis. Chaque anomalie contient gravite, probleme et correction_attendue.`;
+const auditorSystem = `Tu es un auditeur contradictoire indépendant. Vérifie les faits, sources, dates, calculs, unités, hypothèses et conclusions. Cherche les erreurs de logique, les omissions et les formulations excessivement affirmatives. Réponds uniquement en JSON avec les champs score_global, decision, resume, anomalies et nouveau_cycle_requis. Chaque anomalie contient gravite, probleme et correction_attendue.`;
+
+const arbiterSystem = `Tu es l'arbitre final d'une boucle contradictoire. Tu n'es ni le rédacteur ni l'auditeur. Examine la demande initiale, le document final et l'historique des audits. Décide si le document peut être livré. Ne cherche pas un compromis artificiel : tranche selon la solidité des preuves, la cohérence des calculs et la proportionnalité des conclusions. Réponds uniquement en JSON avec les champs decision, score_final, justification, reserves et action_recommandee. decision doit être l'une des valeurs APPROUVE, APPROUVE_AVEC_RESERVES ou REJETE.`;
 
 function validateModel(value, label) {
-  if (typeof value !== "string" || !/^[a-zA-Z0-9_.:/-]{3,160}$/.test(value)) {
+  if (typeof value !== "string" || !/^[~a-zA-Z0-9_.:/-]{3,160}$/.test(value)) {
     throw new Error(`${label} invalide.`);
   }
   return value;
@@ -61,12 +63,12 @@ async function callOpenRouter({ apiKey, model, system, user, json = false }) {
   };
 }
 
-function parseAudit(content) {
+function parseJson(content, label) {
   try {
     return JSON.parse(content);
   } catch {
     const match = content.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("L'audit retourné n'est pas un JSON valide.");
+    if (!match) throw new Error(`${label} n'est pas un JSON valide.`);
     return JSON.parse(match[0]);
   }
 }
@@ -89,10 +91,11 @@ app.post("/api/review", async (req, res) => {
 
     const claudeModel = validateModel(req.body?.claudeModel, "Modèle rédacteur");
     const auditorModel = validateModel(req.body?.auditorModel, "Modèle auditeur");
+    const arbiterModel = validateModel(req.body?.arbiterModel, "Modèle arbitre");
     const maxCycles = Math.min(5, Math.max(1, Number(req.body?.maxCycles || 3)));
     const minScore = Math.min(100, Math.max(50, Number(req.body?.minScore || 90)));
 
-    const result = { versions: [], audits: [], calls: [], totalCost: 0, status: "incomplete" };
+    const result = { versions: [], audits: [], calls: [], totalCost: 0, status: "incomplete", arbitration: null };
 
     const first = await callOpenRouter({ apiKey, model: claudeModel, system: writerSystem, user: request });
     let document = first.content;
@@ -108,21 +111,21 @@ app.post("/api/review", async (req, res) => {
         user: `DEMANDE INITIALE:\n${request}\n\nDOCUMENT À AUDITER:\n${document}`,
         json: true
       });
-      const audit = parseAudit(auditCall.content);
+      const audit = parseJson(auditCall.content, "L'audit");
       result.audits.push({ cycle, ...audit });
       result.calls.push({ role: "audit", model: auditCall.model, provider: auditCall.provider, usage: auditCall.usage });
       result.totalCost += Number(auditCall.usage?.cost || 0);
 
-      const severe = (audit.anomalies || []).some(a => ["critique", "elevee"].includes(String(a.gravite || "").toLowerCase()));
+      const severe = (audit.anomalies || []).some(a => ["critique", "elevee", "élevée"].includes(String(a.gravite || "").toLowerCase()));
       if (Number(audit.score_global || 0) >= minScore && !severe && audit.nouveau_cycle_requis !== true) {
-        result.status = "validated";
-        result.stopReason = "Critères de qualité atteints.";
+        result.status = "ready_for_arbitration";
+        result.stopReason = "Critères d'audit atteints ; passage à l'arbitrage final.";
         break;
       }
 
       if (cycle === maxCycles) {
-        result.status = "max_cycles";
-        result.stopReason = "Nombre maximal de cycles atteint.";
+        result.status = "ready_for_arbitration";
+        result.stopReason = "Nombre maximal de cycles atteint ; passage à l'arbitrage final.";
         break;
       }
 
@@ -137,6 +140,23 @@ app.post("/api/review", async (req, res) => {
       result.calls.push({ role: "correction", model: correction.model, provider: correction.provider, usage: correction.usage });
       result.totalCost += Number(correction.usage?.cost || 0);
     }
+
+    const arbitrationCall = await callOpenRouter({
+      apiKey,
+      model: arbiterModel,
+      system: arbiterSystem,
+      user: `DEMANDE INITIALE:\n${request}\n\nDOCUMENT FINAL:\n${document}\n\nHISTORIQUE DES AUDITS:\n${JSON.stringify(result.audits, null, 2)}`,
+      json: true
+    });
+    const arbitration = parseJson(arbitrationCall.content, "L'arbitrage");
+    result.arbitration = arbitration;
+    result.calls.push({ role: "arbitrage", model: arbitrationCall.model, provider: arbitrationCall.provider, usage: arbitrationCall.usage });
+    result.totalCost += Number(arbitrationCall.usage?.cost || 0);
+
+    const decision = String(arbitration.decision || "").toUpperCase();
+    if (decision === "APPROUVE") result.status = "validated";
+    else if (decision === "APPROUVE_AVEC_RESERVES") result.status = "validated_with_reservations";
+    else result.status = "rejected_by_arbiter";
 
     result.finalDocument = document;
     res.json(result);
