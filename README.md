@@ -1,360 +1,246 @@
 # Boucle Contradictoire
 
-Application web Node.js qui orchestre trois familles de modèles via OpenRouter afin de produire un document, le soumettre à une contre-analyse structurée, le corriger, puis faire trancher un troisième modèle indépendant.
+Application web Node.js qui orchestre une étude multi-modèles avec recherche web, contrôle des sources, corrections successives et arbitrage indépendant.
 
-## Principe général
-
-La boucle repose sur trois rôles volontairement séparés :
-
-1. **Claude rédige et corrige** le document.
-2. **GPT audite** les faits, les calculs, les sources et la logique.
-3. **Grok arbitre** la version finale et décide si elle peut être livrée.
-
-Cette séparation limite le risque qu’un même modèle valide sa propre production. Elle ne garantit toutefois pas l’exactitude absolue : les trois modèles peuvent partager des erreurs, des données obsolètes ou des biais similaires. Les résultats importants doivent rester vérifiés par un humain et, lorsque nécessaire, par des sources primaires.
-
-## Modèles utilisés par défaut
-
-Les champs restent modifiables dans l’interface. Les valeurs par défaut utilisent les alias `latest` d’OpenRouter :
-
-| Rôle | Modèle OpenRouter | Fonction dans la boucle |
-|---|---|---|
-| Rédacteur | `~anthropic/claude-opus-latest` | Produit la première version et applique les corrections |
-| Auditeur | `~openai/gpt-latest` | Réalise la contre-analyse structurée à chaque cycle |
-| Arbitre | `~x-ai/grok-latest` | Rend le verdict final après lecture du document et des audits |
-
-Les alias `latest` redirigent automatiquement vers le modèle le plus récent de la famille concernée. Ce choix évite de modifier le code à chaque changement de version, mais peut aussi introduire une évolution de comportement ou de prix sans changement du dépôt. Pour un environnement strictement reproductible, remplacez les alias par des identifiants de versions figées.
-
-Références OpenRouter :
-
-- Claude Opus Latest : https://openrouter.ai/~anthropic/claude-opus-latest
-- OpenAI GPT Latest : https://openrouter.ai/~openai/gpt-latest
-- Grok Latest : https://openrouter.ai/~x-ai/grok-latest
-
-## Pourquoi Claude comme rédacteur
-
-Claude Opus est utilisé pour la production et la réécriture parce que ce rôle nécessite principalement :
-
-- une rédaction longue et cohérente ;
-- une bonne conservation du contexte entre plusieurs cycles ;
-- la capacité à réorganiser un document sans perdre son intention initiale ;
-- une application disciplinée des corrections demandées ;
-- une distinction explicite entre faits, hypothèses, estimations et recommandations.
-
-Le prompt du rédacteur lui interdit d’inventer une source, un tarif ou une fonctionnalité. Lorsqu’une information ne peut pas être confirmée, il doit écrire exactement :
-
-> Je ne peux pas confirmer cette information
-
-Claude n’est pas choisi comme auditeur de son propre texte afin d’éviter une auto-validation trop complaisante et la répétition des mêmes angles morts.
-
-## Pourquoi GPT comme auditeur contradictoire
-
-GPT est utilisé comme auditeur parce que ce rôle demande un comportement différent de celui du rédacteur :
-
-- décomposer les affirmations du document ;
-- contrôler les dates, les unités et les calculs ;
-- détecter les contradictions internes ;
-- identifier les sources manquantes ou insuffisantes ;
-- distinguer les erreurs critiques des réserves mineures ;
-- retourner une réponse JSON stable et exploitable par le programme.
-
-À chaque cycle, GPT reçoit la demande initiale et la version courante du document. Il retourne notamment :
-
-```json
-{
-  "score_global": 86,
-  "decision": "REVISION_REQUISE",
-  "resume": "Le document est globalement cohérent, mais deux hypothèses budgétaires ne sont pas sourcées.",
-  "anomalies": [
-    {
-      "gravite": "elevee",
-      "probleme": "Le prix utilisé n'est pas attribué à une source vérifiable.",
-      "correction_attendue": "Ajouter une source primaire datée ou présenter la valeur comme une hypothèse."
-    }
-  ],
-  "nouveau_cycle_requis": true
-}
-```
-
-Le score de GPT sert à piloter la boucle, mais il ne constitue pas à lui seul la décision finale.
-
-## Pourquoi Grok comme arbitre
-
-Grok intervient uniquement après la boucle Claude–GPT. Il constitue un troisième regard provenant d’une autre famille de modèles et d’un autre fournisseur.
-
-Son rôle n’est pas de réécrire le document ni de refaire mécaniquement le dernier audit. Il doit :
-
-- examiner la demande initiale ;
-- lire la version finale ;
-- tenir compte de l’historique complet des audits ;
-- vérifier si les corrections répondent réellement aux anomalies ;
-- repérer un éventuel compromis artificiel entre le rédacteur et l’auditeur ;
-- rendre une décision claire de livraison.
-
-Grok retourne un JSON de ce type :
-
-```json
-{
-  "decision": "APPROUVE_AVEC_RESERVES",
-  "score_final": 92,
-  "justification": "Les erreurs critiques ont été corrigées et les hypothèses restantes sont correctement signalées.",
-  "reserves": [
-    "Le prix fournisseur doit être revérifié avant engagement contractuel."
-  ],
-  "action_recommandee": "Le document peut être transmis avec la réserve indiquée."
-}
-```
-
-Les décisions possibles sont :
-
-- `APPROUVE` ;
-- `APPROUVE_AVEC_RESERVES` ;
-- `REJETE`.
-
-La décision de Grok produit respectivement les statuts applicatifs :
-
-- `validated` ;
-- `validated_with_reservations` ;
-- `rejected_by_arbiter`.
-
-## Déroulement complet d’une exécution
-
-### 1. Saisie
-
-L’utilisateur renseigne :
-
-- la demande à traiter ;
-- le modèle Claude ;
-- le modèle GPT ;
-- le modèle Grok ;
-- le nombre maximal de cycles, entre 1 et 5 ;
-- le score cible de l’auditeur, entre 50 et 100.
-
-### 2. Première rédaction
-
-Claude reçoit la demande et produit la version initiale. L’application enregistre :
-
-- le contenu ;
-- le modèle réellement routé par OpenRouter ;
-- le fournisseur ;
-- les tokens d’entrée et de sortie ;
-- le coût retourné par OpenRouter.
-
-### 3. Audit GPT
-
-GPT audite la version courante et retourne un objet JSON. L’application contrôle :
-
-- le score global ;
-- la présence d’anomalies critiques ou élevées ;
-- la valeur de `nouveau_cycle_requis`.
-
-### 4. Correction Claude
-
-Une nouvelle correction est demandée lorsque :
-
-- le score est inférieur au seuil ;
-- une anomalie critique ou élevée subsiste ;
-- GPT demande explicitement un nouveau cycle.
-
-Claude reçoit le document, la demande initiale et l’audit complet. La nouvelle version remplace la précédente pour le cycle suivant.
-
-### 5. Sortie de la boucle Claude–GPT
-
-La boucle s’arrête lorsque :
-
-- le score cible est atteint sans anomalie grave et sans demande de nouveau cycle ; ou
-- le nombre maximal de cycles est atteint.
-
-Dans les deux cas, le document passe obligatoirement à Grok. Atteindre le score cible ne vaut donc pas validation finale.
-
-### 6. Arbitrage Grok
-
-Grok reçoit :
-
-- la demande initiale ;
-- le document final ;
-- tous les audits GPT.
-
-Il rend la décision finale, le score final, une justification, les réserves éventuelles et l’action recommandée.
-
-### 7. Affichage des résultats
-
-L’interface affiche quatre onglets :
-
-- **Document final** ;
-- **Audits** ;
-- **Arbitrage Grok** ;
-- **Usage**.
-
-Le tableau d’usage détaille chaque appel : rédaction, audit, correction et arbitrage.
-
-## Architecture
+## Fonctionnement complet
 
 ```text
-Navigateur
-   │
-   ├── public/index.html
-   ├── public/app.js
-   └── public/styles.css
-   │
-   ▼
-Serveur Express — server.js
-   │
-   ├── POST /api/review
-   ├── GET  /api/health
-   │
-   ▼
-OpenRouter
-   ├── Claude Opus Latest — rédaction/correction
-   ├── GPT Latest — audit contradictoire
-   └── Grok Latest — arbitrage final
+Utilisateur authentifié par Google
+        ↓
+Classification automatique de la tâche
+        ↓
+Sélection des modèles
+        ↓
+Claude rédige avec OpenRouter Web Search
+        ↓
+Firecrawl ouvre et extrait les URL citées
+        ↓
+GPT audite les faits, sources, calculs et la couverture
+        ↓
+Claude corrige selon les anomalies
+        ↓
+Nouveaux cycles d’audit et de correction
+        ↓
+Grok rend un arbitrage final indépendant
+        ↓
+Enregistrement PostgreSQL, dashboard et exports
 ```
+
+La progression est diffusée au navigateur en temps réel avec **Server-Sent Events (SSE)** : sélection des modèles, rédaction, vérification des sources, audits, corrections et arbitrage.
+
+## Modèles et justification
+
+| Rôle | Modèle par défaut | Justification |
+|---|---|---|
+| Rédacteur complexe | `~anthropic/claude-opus-latest` | Suit la dernière version de Claude Opus. Ce rôle privilégie la cohérence des documents longs, le suivi d’instructions et les corrections multi-étapes. |
+| Rédacteur général ou recherche récente | `~anthropic/claude-sonnet-latest` | Réduit le coût et la latence pour les demandes générales tout en conservant de bonnes capacités de synthèse et d’utilisation d’outils. |
+| Auditeur | `openai/gpt-5.6-sol` ou `~openai/gpt-latest` | Produit un audit JSON strict, recalcule, recherche les contradictions et attribue des scores détaillés. Sol est utilisé pour les tâches techniques, financières ou juridiques complexes. |
+| Arbitre | `~x-ai/grok-latest` | Apporte un troisième fournisseur et une décision indépendante. Il ne réécrit pas le document : il approuve, approuve avec réserves ou rejette. |
+
+Les alias `~...-latest` évitent de figer l’application sur une version rapidement obsolète. Les modèles peuvent également être imposés manuellement dans l’interface.
+
+## Sélection automatique selon la tâche
+
+L’application classe la demande avant le premier appel :
+
+- **technical** : code, architecture, API, bugs, GitHub ;
+- **financial** : coûts, budget, ROI, FinOps, facturation ;
+- **legal** : loi, contrat, conformité, réglementation ;
+- **current_research** : actualité, annonce, veille, information récente ;
+- **general_analysis** : autre étude ou document.
+
+Les tâches à risque ou à raisonnement complexe utilisent Claude Opus et GPT-5.6 Sol. Les tâches générales utilisent des alias plus économiques. Grok reste l’arbitre final.
+
+## Recherche web OpenRouter
+
+Chaque rôle peut utiliser le serveur d’outils :
+
+```json
+{
+  "tools": [
+    {
+      "type": "openrouter:web_search",
+      "engine": "auto",
+      "search_context_size": "high",
+      "max_total_results": 10
+    }
+  ]
+}
+```
+
+Le modèle décide quand rechercher. OpenRouter utilise la recherche native du fournisseur lorsqu’elle est disponible et peut basculer vers un moteur compatible. Les annotations `url_citation` sont récupérées par l’application et ajoutées au dossier de preuve.
+
+Documentation : <https://openrouter.ai/docs/guides/features/server-tools/web-search>
+
+## Intégration réelle de Firecrawl
+
+Après chaque rédaction ou correction, l’application collecte les URL citées dans le document et les citations structurées renvoyées par OpenRouter. Jusqu’à dix URL uniques sont contrôlées avec :
+
+```text
+POST https://api.firecrawl.dev/v2/scrape
+```
+
+Firecrawl récupère le contenu principal au format Markdown avec suppression des images Base64, blocage des publicités et `zeroDataRetention: true`. Le rapport transmis à GPT contient l’accessibilité, le titre, le statut, la classe de source et un extrait. Une source inaccessible n’est jamais considérée comme vérifiée.
+
+Documentation : <https://docs.firecrawl.dev/api-reference/endpoint/scrape>
+
+## Vérification stricte des sources
+
+Le contrôle combine :
+
+- présence d’une URL réelle pour les affirmations importantes ;
+- accessibilité et extraction par Firecrawl ;
+- classification indicative de la source : officielle, documentation primaire, média reconnu ou autre ;
+- comparaison du contenu extrait avec l’affirmation auditée.
+
+L’auditeur pénalise les sources inaccessibles, les sources secondaires lorsqu’une source primaire est attendue, les dates incohérentes, les calculs non reproductibles, les affirmations non étayées et les citations inventées ou sans URL.
+
+Cette classification est une heuristique et ne remplace pas une validation humaine.
+
+## Scores détaillés
+
+Chaque audit retourne un score global et six scores sur 100 :
+
+| Catégorie | Objet |
+|---|---|
+| `exactitude_factuelle` | conformité des affirmations aux preuves ; |
+| `qualite_sources` | accessibilité, autorité et pertinence des sources ; |
+| `calculs` | unités, formules et reproductibilité ; |
+| `couverture` | réponse à toutes les dimensions demandées ; |
+| `coherence` | absence de contradiction interne ; |
+| `actualite` | fraîcheur des données et cohérence des dates. |
+
+Les anomalies sont classées en `critique`, `elevee`, `moyenne` ou `faible`. Une anomalie critique ou élevée empêche la validation automatique.
+
+## Arbitrage Grok
+
+Après le dernier audit, Grok reçoit la demande initiale, le document final, tous les audits et l’état des sources vérifiées. Il retourne :
+
+```json
+{
+  "decision": "APPROUVE | APPROUVE_AVEC_RESERVES | REJETE",
+  "confiance": 0,
+  "motifs": [],
+  "reserves": [],
+  "actions_requises": []
+}
+```
+
+Un consensus entre modèles ne constitue pas une preuve. Les décisions importantes restent soumises à une revue humaine.
+
+## Authentification Google
+
+L’application utilise OAuth 2.0 avec Passport. Il faut créer un client OAuth « Web application » dans Google Cloud et déclarer l’URI de redirection :
+
+```text
+https://VOTRE-DOMAINE/auth/google/callback
+```
+
+Variables nécessaires :
+
+```text
+GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET
+SESSION_SECRET
+APP_URL
+```
+
+Les sessions sont stockées dans PostgreSQL et utilisent des cookies `httpOnly`, `sameSite=lax` et `secure` en production. `DEV_BYPASS_AUTH=true` existe uniquement pour le développement local.
+
+## Historique PostgreSQL
+
+Chaque exécution est associée à l’utilisateur Google et conserve la demande, le type de tâche, les modèles réellement utilisés, les versions, les audits, les sources vérifiées, l’arbitrage, le document final, les tokens, le coût, le statut et la date.
+
+Tables principales : `users`, `runs` et `session`. L’utilisateur ne peut consulter et exporter que ses propres exécutions.
+
+## Exports
+
+Une exécution terminée peut être exportée en :
+
+- **Markdown** : document et arbitrage ;
+- **PDF** : document final et arbitrage ;
+- **Word `.docx`** : document éditable ;
+- **Excel `.xlsx`** : synthèse, scores par cycle et consommation détaillée.
+
+Routes :
+
+```text
+GET /api/runs/:id/export/md
+GET /api/runs/:id/export/pdf
+GET /api/runs/:id/export/docx
+GET /api/runs/:id/export/xlsx
+```
+
+## Streaming de la progression
+
+`POST /api/jobs` crée une tâche et renvoie un identifiant. Le navigateur ouvre ensuite :
+
+```text
+GET /api/jobs/:id/events
+```
+
+Cette route SSE diffuse les événements `models`, `progress`, `source`, `audit`, `complete` et `error`.
+
+## Tableau de bord de consommation
+
+Le tableau de bord agrège sur 90 jours : nombre d’exécutions, nombre de validations, coût total, tokens d’entrée et de sortie, nombre d’appels et coût par modèle.
+
+Les coûts proviennent du champ `usage.cost` renvoyé par OpenRouter. Ils doivent être rapprochés de la facturation fournisseur pour un contrôle financier définitif.
 
 ## API
 
-### `GET /api/health`
+| Route | Fonction |
+|---|---|
+| `GET /api/health` | état OpenRouter, Firecrawl, Google et PostgreSQL ; |
+| `GET /api/me` | utilisateur connecté ; |
+| `POST /api/jobs` | création d’une boucle ; |
+| `GET /api/jobs/:id/events` | progression SSE ; |
+| `GET /api/history` | historique personnel ; |
+| `GET /api/dashboard` | consommation agrégée ; |
+| `GET /api/runs/:id/export/:format` | export. |
 
-Retourne l’état du serveur sans révéler les secrets :
-
-```json
-{
-  "ok": true,
-  "hasOpenRouterKey": true,
-  "hasFirecrawlKey": false
-}
-```
-
-### `POST /api/review`
-
-Exemple de requête :
-
-```json
-{
-  "request": "Prépare une comparaison technique et économique...",
-  "claudeModel": "~anthropic/claude-opus-latest",
-  "auditorModel": "~openai/gpt-latest",
-  "arbiterModel": "~x-ai/grok-latest",
-  "maxCycles": 3,
-  "minScore": 90
-}
-```
-
-## Coûts
-
-Chaque exécution comprend au minimum :
-
-1. un appel Claude de rédaction ;
-2. un appel GPT d’audit ;
-3. un appel Grok d’arbitrage.
-
-Chaque cycle supplémentaire ajoute généralement :
-
-- un appel Claude de correction ;
-- un appel GPT de nouvel audit.
-
-Le coût total affiché correspond à la somme des valeurs `usage.cost` retournées par OpenRouter. Il dépend des modèles effectivement routés, du volume de texte, du nombre de cycles et des tarifs OpenRouter au moment de l’exécution.
-
-L’utilisation d’alias `latest` signifie que les prix peuvent évoluer. Pour maîtriser strictement le budget, utilisez des versions figées et ajoutez un plafond applicatif avant production.
-
-## Sécurité
-
-Aucune clé API réelle n’est stockée dans le dépôt.
-
-Les secrets doivent être définis dans Render ou dans l’environnement local :
+## Configuration
 
 ```text
-OPENROUTER_API_KEY
-FIRECRAWL_API_KEY
-APP_URL
-PORT
+OPENROUTER_API_KEY=
+FIRECRAWL_API_KEY=
+DATABASE_URL=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+SESSION_SECRET=
+APP_URL=http://localhost:3000
+PORT=3000
+DEV_BYPASS_AUTH=false
 ```
 
-Le fichier `.env.example` contient uniquement les noms des variables. Les fichiers `.env` sont exclus par `.gitignore`.
+Aucun secret réel ne doit être commité. `.env` est ignoré par Git.
 
-La saisie temporaire d’une clé dans l’interface est uniquement destinée aux tests. Pour une exposition publique, utilisez exclusivement une clé côté serveur et ajoutez :
-
-- authentification ;
-- limitation de débit ;
-- quotas par utilisateur ;
-- protection CSRF ;
-- journalisation sans secrets ;
-- plafond de coût ;
-- contrôle d’accès au service.
-
-## Lancer localement
+## Installation locale
 
 ```bash
 npm install
-export OPENROUTER_API_KEY="votre-cle"
-export APP_URL="http://localhost:3000"
+cp .env.example .env
 npm start
 ```
 
-Puis ouvrir :
+Pour un test sans OAuth ni PostgreSQL :
 
 ```text
-http://localhost:3000
+DEV_BYPASS_AUTH=true
 ```
+
+L’historique reste alors limité à la mémoire du processus et disparaît au redémarrage.
 
 ## Déploiement Render
 
-Le dépôt contient un fichier `render.yaml` :
+`render.yaml` crée un Web Service Node.js Starter à Frankfurt et une base Render PostgreSQL à Frankfurt. Il injecte automatiquement `DATABASE_URL` et configure le health check `/api/health`.
 
-- Runtime : Node.js ;
-- Région : Frankfurt ;
-- Build : `npm install` ;
-- Start : `npm start` ;
-- Health check : `/api/health`.
+Après création du Blueprint, renseigner manuellement les secrets OpenRouter, Firecrawl et Google ainsi que l’URL publique dans `APP_URL`.
 
-Après création du service, ajoutez les clés dans les variables secrètes Render, jamais dans GitHub.
+## Limites connues
 
-## Docker
-
-```bash
-docker build -t boucle-contradictoire .
-docker run --rm -p 3000:3000 \
-  -e OPENROUTER_API_KEY="votre-cle" \
-  -e APP_URL="http://localhost:3000" \
-  boucle-contradictoire
-```
-
-## Structure du dépôt
-
-```text
-├── public/
-│   ├── index.html
-│   ├── app.js
-│   └── styles.css
-├── server.js
-├── package.json
-├── Dockerfile
-├── render.yaml
-├── .env.example
-├── .gitignore
-└── README.md
-```
-
-## État de Firecrawl
-
-La variable `FIRECRAWL_API_KEY` est préparée, mais la récupération des pages web par Firecrawl n’est pas encore activée dans la version actuelle. Les modèles peuvent donc analyser les sources fournies dans le texte, mais l’application ne garantit pas encore qu’elle a téléchargé et vérifié chaque URL citée.
-
-## Limites importantes
-
-- Un consensus entre trois modèles ne constitue pas une preuve.
-- Les modèles peuvent utiliser des connaissances obsolètes.
-- Une URL citée peut être inaccessible ou ne pas soutenir l’affirmation associée.
-- Le format JSON dépend du respect des instructions par le modèle et du support de l’endpoint routé.
-- Les alias `latest` améliorent la maintenance mais réduisent la reproductibilité.
-- L’application ne dispose pas encore de base de données, de comptes utilisateurs ou d’historique serveur persistant.
-- Les appels sont non streamés et peuvent durer plusieurs minutes.
-
-## Évolutions prévues
-
-- intégration Firecrawl pour récupérer les sources accessibles ;
-- recherche web OpenRouter ;
-- plafond de coût avant et pendant la boucle ;
-- authentification ;
-- persistance des analyses ;
-- export Markdown et JSON ;
-- tests automatisés ;
-- versionnement explicite des modèles ;
-- possibilité d’exiger une validation humaine après le verdict de Grok.
+- Les tâches SSE actives sont conservées en mémoire : une seule instance applicative est recommandée dans cette version.
+- Une coupure du processus interrompt une boucle en cours, mais les exécutions terminées restent en base.
+- Firecrawl ne garantit pas l’accès aux pages protégées, payantes ou bloquées. L’application ne contourne aucun contrôle d’accès.
+- Les classifications de domaines et les scores sont des aides, pas des certifications.
+- Les exports PDF et Word privilégient la robustesse ; la mise en page reste volontairement simple.
