@@ -1,0 +1,17 @@
+{
+  "name": "ai-review-loop-openrouter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Boucle de rédaction Claude et audit ChatGPT via OpenRouter",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
