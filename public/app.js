@@ -34,6 +34,17 @@ function renderAudit(audit) {
   </section>`;
 }
 
+function renderArbitration(arbitration) {
+  if (!arbitration) return '<p>Aucun arbitrage retourné.</p>';
+  const reserves = (arbitration.reserves || []).map(item => `<li>${item}</li>`).join('');
+  return `<section class="audit-card">
+    <h3>${arbitration.decision || 'Décision indisponible'} — ${arbitration.score_final ?? '—'}/100</h3>
+    <p>${arbitration.justification || ''}</p>
+    ${reserves ? `<h4>Réserves</h4><ul>${reserves}</ul>` : '<p>Aucune réserve déclarée.</p>'}
+    <p><b>Action recommandée :</b> ${arbitration.action_recommandee || '—'}</p>
+  </section>`;
+}
+
 function renderUsage(calls) {
   if (!calls.length) return '<p>Aucun appel enregistré.</p>';
   return `<div class="table-wrap"><table>
@@ -58,6 +69,7 @@ form.addEventListener('submit', async event => {
     request: document.querySelector('#request').value,
     claudeModel: document.querySelector('#claudeModel').value.trim(),
     auditorModel: document.querySelector('#auditorModel').value.trim(),
+    arbiterModel: document.querySelector('#arbiterModel').value.trim(),
     maxCycles: Number(document.querySelector('#maxCycles').value),
     minScore: Number(document.querySelector('#minScore').value),
     apiKey: document.querySelector('#apiKey').value.trim() || undefined
@@ -75,11 +87,12 @@ form.addEventListener('submit', async event => {
     empty.hidden = true;
     results.hidden = false;
     document.querySelector('#status').textContent = data.status || '—';
-    document.querySelector('#score').textContent = data.audits?.at(-1)?.score_global ?? '—';
+    document.querySelector('#score').textContent = data.arbitration?.score_final ?? data.audits?.at(-1)?.score_global ?? '—';
     document.querySelector('#calls').textContent = data.calls?.length || 0;
     document.querySelector('#cost').textContent = `$${Number(data.totalCost || 0).toFixed(4)}`;
     finalDocument.textContent = data.finalDocument || '';
     document.querySelector('#audits').innerHTML = (data.audits || []).map(renderAudit).join('') || '<p>Aucun audit.</p>';
+    document.querySelector('#arbitration').innerHTML = renderArbitration(data.arbitration);
     document.querySelector('#usage').innerHTML = renderUsage(data.calls || []);
   } catch (error) {
     errorBox.textContent = error.message;
