@@ -1,297 +1,219 @@
 # Boucle Contradictoire
 
-**Boucle Contradictoire** est une application web Node.js qui orchestre une rédaction suivie d’une contre-analyse indépendante à l’aide de modèles accessibles via OpenRouter.
-
-L’objectif est de ne pas accepter directement la première réponse d’un modèle. Une seconde IA joue le rôle d’auditeur, cherche les erreurs et exige une nouvelle version tant que les critères de qualité ne sont pas atteints.
-
----
+Application web Node.js qui orchestre trois familles de modèles via OpenRouter afin de produire un document, le soumettre à une contre-analyse structurée, le corriger, puis faire trancher un troisième modèle indépendant.
 
 ## Principe général
 
-L’application utilise deux rôles distincts :
+La boucle repose sur trois rôles volontairement séparés :
 
-- **le rédacteur**, chargé de produire puis de corriger le document ;
-- **l’auditeur contradictoire**, chargé de contrôler les faits, les sources, les dates, les calculs, les unités et les conclusions.
+1. **Claude rédige et corrige** le document.
+2. **GPT audite** les faits, les calculs, les sources et la logique.
+3. **Grok arbitre** la version finale et décide si elle peut être livrée.
 
-Les modèles sont configurables dans l’interface. Ils ne sont pas codés en dur : il suffit d’indiquer leurs identifiants OpenRouter.
+Cette séparation limite le risque qu’un même modèle valide sa propre production. Elle ne garantit toutefois pas l’exactitude absolue : les trois modèles peuvent partager des erreurs, des données obsolètes ou des biais similaires. Les résultats importants doivent rester vérifiés par un humain et, lorsque nécessaire, par des sources primaires.
 
-Exemple de séquence :
+## Modèles utilisés par défaut
 
-```text
-Demande utilisateur
-        │
-        ▼
-Modèle rédacteur
-        │
-        ▼
-Version initiale du document
-        │
-        ▼
-Modèle auditeur
-        │
-        ├── document validé ───────────────► résultat final
-        │
-        └── anomalies détectées
-                    │
-                    ▼
-             Modèle rédacteur
-                    │
-                    ▼
-             Version corrigée
-                    │
-                    └──────────────► nouvel audit
-```
+Les champs restent modifiables dans l’interface. Les valeurs par défaut utilisent les alias `latest` d’OpenRouter :
 
----
+| Rôle | Modèle OpenRouter | Fonction dans la boucle |
+|---|---|---|
+| Rédacteur | `~anthropic/claude-opus-latest` | Produit la première version et applique les corrections |
+| Auditeur | `~openai/gpt-latest` | Réalise la contre-analyse structurée à chaque cycle |
+| Arbitre | `~x-ai/grok-latest` | Rend le verdict final après lecture du document et des audits |
 
-## Fonctionnement complet
+Les alias `latest` redirigent automatiquement vers le modèle le plus récent de la famille concernée. Ce choix évite de modifier le code à chaque changement de version, mais peut aussi introduire une évolution de comportement ou de prix sans changement du dépôt. Pour un environnement strictement reproductible, remplacez les alias par des identifiants de versions figées.
 
-### 1. Saisie de la demande
+Références OpenRouter :
 
-L’utilisateur renseigne dans l’interface :
+- Claude Opus Latest : https://openrouter.ai/~anthropic/claude-opus-latest
+- OpenAI GPT Latest : https://openrouter.ai/~openai/gpt-latest
+- Grok Latest : https://openrouter.ai/~x-ai/grok-latest
 
-- la demande ou le sujet à traiter ;
-- l’identifiant OpenRouter du modèle rédacteur ;
-- l’identifiant OpenRouter du modèle auditeur ;
-- le nombre maximal de cycles ;
-- le score minimal attendu ;
-- éventuellement une clé OpenRouter temporaire si aucune clé n’est configurée côté serveur.
+## Pourquoi Claude comme rédacteur
 
-La demande doit contenir au moins 20 caractères.
+Claude Opus est utilisé pour la production et la réécriture parce que ce rôle nécessite principalement :
 
-### 2. Vérification de l’état du serveur
+- une rédaction longue et cohérente ;
+- une bonne conservation du contexte entre plusieurs cycles ;
+- la capacité à réorganiser un document sans perdre son intention initiale ;
+- une application disciplinée des corrections demandées ;
+- une distinction explicite entre faits, hypothèses, estimations et recommandations.
 
-Au chargement, le navigateur appelle :
+Le prompt du rédacteur lui interdit d’inventer une source, un tarif ou une fonctionnalité. Lorsqu’une information ne peut pas être confirmée, il doit écrire exactement :
 
-```text
-GET /api/health
-```
+> Je ne peux pas confirmer cette information
 
-Cette route indique :
+Claude n’est pas choisi comme auditeur de son propre texte afin d’éviter une auto-validation trop complaisante et la répétition des mêmes angles morts.
 
-- si le serveur fonctionne ;
-- si `OPENROUTER_API_KEY` est configurée ;
-- si `FIRECRAWL_API_KEY` est configurée.
+## Pourquoi GPT comme auditeur contradictoire
 
-L’interface affiche alors l’un des états suivants :
+GPT est utilisé comme auditeur parce que ce rôle demande un comportement différent de celui du rédacteur :
 
-- **Serveur prêt** ;
-- **Clé serveur absente** ;
-- **Serveur indisponible**.
+- décomposer les affirmations du document ;
+- contrôler les dates, les unités et les calculs ;
+- détecter les contradictions internes ;
+- identifier les sources manquantes ou insuffisantes ;
+- distinguer les erreurs critiques des réserves mineures ;
+- retourner une réponse JSON stable et exploitable par le programme.
 
-La présence d’une clé Firecrawl est actuellement affichée par l’API de santé, mais Firecrawl n’est pas encore appelé par le moteur de traitement.
-
-### 3. Création de la première version
-
-Le backend envoie la demande au modèle rédacteur via :
-
-```text
-POST https://openrouter.ai/api/v1/chat/completions
-```
-
-Le prompt système impose notamment au rédacteur de :
-
-- distinguer les faits vérifiés, hypothèses, estimations et recommandations ;
-- citer des sources identifiables ;
-- ne jamais inventer un tarif, une fonctionnalité ou une source ;
-- écrire « Je ne peux pas confirmer cette information » lorsqu’une donnée ne peut pas être vérifiée.
-
-La réponse devient la **version initiale** du document.
-
-### 4. Audit contradictoire
-
-La version obtenue est envoyée au modèle auditeur avec la demande initiale.
-
-L’auditeur doit contrôler :
-
-- les faits ;
-- les sources ;
-- les dates ;
-- les calculs ;
-- les unités ;
-- les conclusions ;
-- la cohérence globale du document.
-
-Il doit répondre uniquement en JSON avec la structure suivante :
+À chaque cycle, GPT reçoit la demande initiale et la version courante du document. Il retourne notamment :
 
 ```json
 {
-  "score_global": 88,
-  "decision": "correction requise",
-  "resume": "Le document est globalement cohérent mais comporte plusieurs points non vérifiés.",
+  "score_global": 86,
+  "decision": "REVISION_REQUISE",
+  "resume": "Le document est globalement cohérent, mais deux hypothèses budgétaires ne sont pas sourcées.",
   "anomalies": [
     {
       "gravite": "elevee",
-      "probleme": "Le tarif indiqué ne possède pas de source vérifiable.",
-      "correction_attendue": "Ajouter une source officielle ou signaler l’incertitude."
+      "probleme": "Le prix utilisé n'est pas attribué à une source vérifiable.",
+      "correction_attendue": "Ajouter une source primaire datée ou présenter la valeur comme une hypothèse."
     }
   ],
   "nouveau_cycle_requis": true
 }
 ```
 
-Le serveur tente d’abord de lire directement le JSON. Si le modèle ajoute accidentellement du texte autour du JSON, le backend recherche le premier bloc JSON exploitable.
+Le score de GPT sert à piloter la boucle, mais il ne constitue pas à lui seul la décision finale.
 
-### 5. Décision de validation
+## Pourquoi Grok comme arbitre
 
-Le document est validé lorsque les trois conditions suivantes sont réunies :
+Grok intervient uniquement après la boucle Claude–GPT. Il constitue un troisième regard provenant d’une autre famille de modèles et d’un autre fournisseur.
 
-1. le score est supérieur ou égal au score minimal demandé ;
-2. aucune anomalie de gravité `critique` ou `elevee` ne subsiste ;
-3. l’auditeur ne demande pas explicitement un nouveau cycle.
+Son rôle n’est pas de réécrire le document ni de refaire mécaniquement le dernier audit. Il doit :
 
-Dans ce cas :
+- examiner la demande initiale ;
+- lire la version finale ;
+- tenir compte de l’historique complet des audits ;
+- vérifier si les corrections répondent réellement aux anomalies ;
+- repérer un éventuel compromis artificiel entre le rédacteur et l’auditeur ;
+- rendre une décision claire de livraison.
 
-```text
-status = validated
+Grok retourne un JSON de ce type :
+
+```json
+{
+  "decision": "APPROUVE_AVEC_RESERVES",
+  "score_final": 92,
+  "justification": "Les erreurs critiques ont été corrigées et les hypothèses restantes sont correctement signalées.",
+  "reserves": [
+    "Le prix fournisseur doit être revérifié avant engagement contractuel."
+  ],
+  "action_recommandee": "Le document peut être transmis avec la réserve indiquée."
+}
 ```
 
-et la raison d’arrêt est :
+Les décisions possibles sont :
 
-```text
-Critères de qualité atteints.
-```
+- `APPROUVE` ;
+- `APPROUVE_AVEC_RESERVES` ;
+- `REJETE`.
 
-### 6. Correction du document
+La décision de Grok produit respectivement les statuts applicatifs :
 
-Si le document n’est pas validé, l’audit complet est transmis au modèle rédacteur.
+- `validated` ;
+- `validated_with_reservations` ;
+- `rejected_by_arbiter`.
 
-Le rédacteur reçoit :
+## Déroulement complet d’une exécution
+
+### 1. Saisie
+
+L’utilisateur renseigne :
+
+- la demande à traiter ;
+- le modèle Claude ;
+- le modèle GPT ;
+- le modèle Grok ;
+- le nombre maximal de cycles, entre 1 et 5 ;
+- le score cible de l’auditeur, entre 50 et 100.
+
+### 2. Première rédaction
+
+Claude reçoit la demande et produit la version initiale. L’application enregistre :
+
+- le contenu ;
+- le modèle réellement routé par OpenRouter ;
+- le fournisseur ;
+- les tokens d’entrée et de sortie ;
+- le coût retourné par OpenRouter.
+
+### 3. Audit GPT
+
+GPT audite la version courante et retourne un objet JSON. L’application contrôle :
+
+- le score global ;
+- la présence d’anomalies critiques ou élevées ;
+- la valeur de `nouveau_cycle_requis`.
+
+### 4. Correction Claude
+
+Une nouvelle correction est demandée lorsque :
+
+- le score est inférieur au seuil ;
+- une anomalie critique ou élevée subsiste ;
+- GPT demande explicitement un nouveau cycle.
+
+Claude reçoit le document, la demande initiale et l’audit complet. La nouvelle version remplace la précédente pour le cycle suivant.
+
+### 5. Sortie de la boucle Claude–GPT
+
+La boucle s’arrête lorsque :
+
+- le score cible est atteint sans anomalie grave et sans demande de nouveau cycle ; ou
+- le nombre maximal de cycles est atteint.
+
+Dans les deux cas, le document passe obligatoirement à Grok. Atteindre le score cible ne vaut donc pas validation finale.
+
+### 6. Arbitrage Grok
+
+Grok reçoit :
 
 - la demande initiale ;
-- la version courante du document ;
-- toutes les anomalies détectées ;
-- les corrections attendues.
-
-Il produit alors une nouvelle version complète, qui remplace la version précédente et repart dans un nouveau cycle d’audit.
-
-### 7. Arrêt de la boucle
-
-La boucle s’arrête dans deux cas :
-
-#### Validation
-
-```text
-status = validated
-```
-
-Les critères de qualité sont atteints.
-
-#### Nombre maximal de cycles atteint
-
-```text
-status = max_cycles
-```
-
-Le document final est tout de même retourné, mais il ne doit pas être considéré comme pleinement validé.
-
-Le nombre maximal de cycles est limité côté serveur à cinq afin d’éviter une consommation incontrôlée.
-
----
-
-## Résultats affichés
-
-À la fin de l’exécution, l’interface affiche :
-
-- le statut final ;
-- le dernier score obtenu ;
-- le nombre total d’appels aux modèles ;
-- le coût total remonté par OpenRouter ;
 - le document final ;
-- le détail de chaque audit ;
-- les anomalies et corrections attendues ;
-- les tokens d’entrée et de sortie de chaque appel ;
-- le coût de chaque appel ;
-- le modèle réellement utilisé.
+- tous les audits GPT.
 
-Un bouton permet de copier le document final dans le presse-papiers.
+Il rend la décision finale, le score final, une justification, les réserves éventuelles et l’action recommandée.
 
----
+### 7. Affichage des résultats
 
-## Calcul des coûts
+L’interface affiche quatre onglets :
 
-L’application additionne la propriété `usage.cost` renvoyée par OpenRouter pour chaque appel :
+- **Document final** ;
+- **Audits** ;
+- **Arbitrage Grok** ;
+- **Usage**.
 
-- rédaction initiale ;
-- audits ;
-- corrections.
+Le tableau d’usage détaille chaque appel : rédaction, audit, correction et arbitrage.
 
-Le coût affiché dépend donc :
-
-- du modèle choisi ;
-- de la taille de la demande ;
-- de la longueur du document ;
-- du nombre d’anomalies ;
-- du nombre de cycles ;
-- de la tarification appliquée par OpenRouter et le fournisseur du modèle.
-
-Si un fournisseur ne retourne pas la propriété `usage.cost`, le coût affiché pour cet appel peut être nul ou incomplet.
-
-L’application ne bloque pas encore automatiquement une exécution sur la base d’un budget maximal.
-
----
-
-## Architecture technique
+## Architecture
 
 ```text
 Navigateur
    │
-   ├── HTML / CSS / JavaScript statique
+   ├── public/index.html
+   ├── public/app.js
+   └── public/styles.css
    │
-   ├── GET /api/health
+   ▼
+Serveur Express — server.js
    │
-   └── POST /api/review
-             │
-             ▼
-       Serveur Express
-             │
-             ├── validation des paramètres
-             ├── orchestration des cycles
-             ├── calcul des coûts
-             └── appels OpenRouter
-                       │
-                       ▼
-                 Modèles IA
+   ├── POST /api/review
+   ├── GET  /api/health
+   │
+   ▼
+OpenRouter
+   ├── Claude Opus Latest — rédaction/correction
+   ├── GPT Latest — audit contradictoire
+   └── Grok Latest — arbitrage final
 ```
 
-### Frontend
-
-Le frontend se trouve dans `public/` :
-
-- `index.html` : structure de l’interface ;
-- `styles.css` : affichage responsive ;
-- `app.js` : appels API, affichage des résultats et copie du document.
-
-### Backend
-
-Le backend se trouve dans `server.js`.
-
-Il assure :
-
-- la validation des identifiants de modèles ;
-- la récupération de la clé OpenRouter ;
-- l’appel aux modèles ;
-- le traitement du JSON de l’auditeur ;
-- l’orchestration des cycles ;
-- le calcul du coût ;
-- la gestion des erreurs ;
-- l’exposition du frontend statique.
-
-Le serveur écoute sur :
-
-```text
-0.0.0.0:$PORT
-```
-
-ce qui le rend compatible avec Render et les plateformes de conteneurs.
-
----
-
-## Routes API
+## API
 
 ### `GET /api/health`
 
-Exemple de réponse :
+Retourne l’état du serveur sans révéler les secrets :
 
 ```json
 {
@@ -301,43 +223,43 @@ Exemple de réponse :
 }
 ```
 
-Aucune clé n’est retournée par cette route. Seule leur présence est indiquée.
-
 ### `POST /api/review`
 
 Exemple de requête :
 
 ```json
 {
-  "request": "Rédige une analyse comparant deux solutions techniques.",
-  "claudeModel": "anthropic/claude-sonnet-4",
-  "auditorModel": "openai/gpt-5",
+  "request": "Prépare une comparaison technique et économique...",
+  "claudeModel": "~anthropic/claude-opus-latest",
+  "auditorModel": "~openai/gpt-latest",
+  "arbiterModel": "~x-ai/grok-latest",
   "maxCycles": 3,
   "minScore": 90
 }
 ```
 
-Exemple simplifié de réponse :
+## Coûts
 
-```json
-{
-  "status": "validated",
-  "stopReason": "Critères de qualité atteints.",
-  "finalDocument": "...",
-  "versions": [],
-  "audits": [],
-  "calls": [],
-  "totalCost": 0.0321
-}
-```
+Chaque exécution comprend au minimum :
 
----
+1. un appel Claude de rédaction ;
+2. un appel GPT d’audit ;
+3. un appel Grok d’arbitrage.
 
-## Sécurité et gestion des secrets
+Chaque cycle supplémentaire ajoute généralement :
 
-Aucune clé API réelle ne doit être enregistrée dans GitHub.
+- un appel Claude de correction ;
+- un appel GPT de nouvel audit.
 
-Les secrets doivent être définis dans les variables d’environnement du serveur :
+Le coût total affiché correspond à la somme des valeurs `usage.cost` retournées par OpenRouter. Il dépend des modèles effectivement routés, du volume de texte, du nombre de cycles et des tarifs OpenRouter au moment de l’exécution.
+
+L’utilisation d’alias `latest` signifie que les prix peuvent évoluer. Pour maîtriser strictement le budget, utilisez des versions figées et ajoutez un plafond applicatif avant production.
+
+## Sécurité
+
+Aucune clé API réelle n’est stockée dans le dépôt.
+
+Les secrets doivent être définis dans Render ou dans l’environnement local :
 
 ```text
 OPENROUTER_API_KEY
@@ -346,161 +268,46 @@ APP_URL
 PORT
 ```
 
-Le dépôt contient uniquement un fichier `.env.example` sans valeur sensible.
+Le fichier `.env.example` contient uniquement les noms des variables. Les fichiers `.env` sont exclus par `.gitignore`.
 
-Le `.gitignore` exclut notamment :
+La saisie temporaire d’une clé dans l’interface est uniquement destinée aux tests. Pour une exposition publique, utilisez exclusivement une clé côté serveur et ajoutez :
 
-```text
-.env
-.env.*
-```
-
-### Priorité de la clé OpenRouter
-
-Le serveur utilise :
-
-1. `OPENROUTER_API_KEY` côté serveur si elle existe ;
-2. sinon la clé saisie temporairement dans l’interface.
-
-La saisie d’une clé dans le navigateur est prévue uniquement pour les tests. Pour un déploiement public, il faut utiliser une clé serveur et ajouter une authentification.
-
-### Recommandations avant mise en production
-
-Ajouter au minimum :
-
-- authentification des utilisateurs ;
-- limitation du nombre de requêtes ;
+- authentification ;
+- limitation de débit ;
 - quotas par utilisateur ;
-- plafond budgétaire ;
-- journalisation contrôlée ;
-- protection contre les abus ;
-- validation renforcée des entrées ;
-- politique de conservation des données ;
-- masquage des données sensibles dans les logs.
+- protection CSRF ;
+- journalisation sans secrets ;
+- plafond de coût ;
+- contrôle d’accès au service.
 
----
-
-## Confidentialité OpenRouter
-
-Les appels utilisent l’API OpenRouter. La confidentialité réelle dépend :
-
-- du modèle choisi ;
-- du fournisseur sélectionné par OpenRouter ;
-- des paramètres de routage ;
-- des politiques de conservation du fournisseur.
-
-Cette version ne force pas encore les options OpenRouter suivantes :
-
-- `data_collection: deny` ;
-- `zdr: true` ;
-- une liste fermée de fournisseurs ;
-- l’interdiction des fallbacks.
-
-Ces options devront être ajoutées si l’application traite des données confidentielles.
-
----
-
-## Firecrawl et accès web
-
-La variable suivante est déjà prévue :
-
-```text
-FIRECRAWL_API_KEY
-```
-
-Cependant, dans la version actuellement publiée :
-
-- Firecrawl n’est pas encore appelé par `server.js` ;
-- les URL présentes dans une demande ne sont pas automatiquement récupérées ;
-- l’application ne garantit donc pas qu’une source a réellement été consultée ;
-- les capacités de recherche dépendent du modèle et du fournisseur sélectionnés.
-
-Une prochaine version pourra :
-
-1. extraire les URL de la demande et du document ;
-2. récupérer les pages avec Firecrawl ;
-3. transmettre leur contenu à l’auditeur ;
-4. distinguer les sources accessibles, inaccessibles et non vérifiées ;
-5. conserver la clé Firecrawl exclusivement côté serveur.
-
-L’application ne doit pas être utilisée pour contourner des paywalls, des mécanismes d’authentification ou des protections anti-bot sans autorisation.
-
----
-
-## Installation locale
-
-### Prérequis
-
-- Node.js 18 ou plus récent ;
-- npm ;
-- une clé OpenRouter valide ;
-- des crédits disponibles sur OpenRouter.
-
-### Installation
+## Lancer localement
 
 ```bash
 npm install
-```
-
-### Configuration Linux ou macOS
-
-```bash
-export OPENROUTER_API_KEY="votre-cle-openrouter"
-export FIRECRAWL_API_KEY="votre-cle-firecrawl"
+export OPENROUTER_API_KEY="votre-cle"
 export APP_URL="http://localhost:3000"
-export PORT="3000"
 npm start
 ```
 
-### Configuration PowerShell
-
-```powershell
-$env:OPENROUTER_API_KEY="votre-cle-openrouter"
-$env:FIRECRAWL_API_KEY="votre-cle-firecrawl"
-$env:APP_URL="http://localhost:3000"
-$env:PORT="3000"
-npm start
-```
-
-Ouvrir ensuite :
+Puis ouvrir :
 
 ```text
 http://localhost:3000
 ```
 
----
+## Déploiement Render
 
-## Déploiement sur Render
+Le dépôt contient un fichier `render.yaml` :
 
-Le dépôt contient un fichier `render.yaml` utilisable comme Blueprint Render.
+- Runtime : Node.js ;
+- Région : Frankfurt ;
+- Build : `npm install` ;
+- Start : `npm start` ;
+- Health check : `/api/health`.
 
-Configuration prévue :
-
-- **type** : Web Service ;
-- **runtime** : Node.js ;
-- **région** : Frankfurt ;
-- **plan proposé** : Starter ;
-- **commande de build** : `npm install` ;
-- **commande de démarrage** : `npm start` ;
-- **health check** : `/api/health`.
-
-Après la création du service, ajouter dans Render :
-
-```text
-OPENROUTER_API_KEY=<secret>
-FIRECRAWL_API_KEY=<secret>
-APP_URL=https://adresse-du-service.onrender.com
-```
-
-Ne jamais écrire ces valeurs dans GitHub, dans le README ou dans `.env.example`.
-
----
+Après création du service, ajoutez les clés dans les variables secrètes Render, jamais dans GitHub.
 
 ## Docker
-
-Le dépôt contient également un `Dockerfile`.
-
-Exemple :
 
 ```bash
 docker build -t boucle-contradictoire .
@@ -510,12 +317,9 @@ docker run --rm -p 3000:3000 \
   boucle-contradictoire
 ```
 
----
-
 ## Structure du dépôt
 
 ```text
-Boucle-Contradictoire/
 ├── public/
 │   ├── index.html
 │   ├── app.js
@@ -529,50 +333,28 @@ Boucle-Contradictoire/
 └── README.md
 ```
 
----
+## État de Firecrawl
 
-## Limites actuelles
+La variable `FIRECRAWL_API_KEY` est préparée, mais la récupération des pages web par Firecrawl n’est pas encore activée dans la version actuelle. Les modèles peuvent donc analyser les sources fournies dans le texte, mais l’application ne garantit pas encore qu’elle a téléchargé et vérifié chaque URL citée.
 
-La version actuelle constitue un socle fonctionnel, mais présente encore les limites suivantes :
+## Limites importantes
 
-- pas d’authentification ;
-- pas de comptes utilisateurs ;
-- pas de base de données ;
-- pas d’historique persistant ;
-- appels non streamés ;
-- pas d’annulation d’une boucle en cours ;
-- pas de plafond budgétaire automatique ;
-- pas de recherche web garantie ;
-- Firecrawl non encore intégré au traitement ;
-- pas de troisième arbitre tel que Grok ;
-- pas de reprise automatique après une erreur réseau ;
-- pas de limitation de débit ;
-- maximum de cinq cycles ;
-- résultat dépendant fortement des modèles sélectionnés.
-
----
+- Un consensus entre trois modèles ne constitue pas une preuve.
+- Les modèles peuvent utiliser des connaissances obsolètes.
+- Une URL citée peut être inaccessible ou ne pas soutenir l’affirmation associée.
+- Le format JSON dépend du respect des instructions par le modèle et du support de l’endpoint routé.
+- Les alias `latest` améliorent la maintenance mais réduisent la reproductibilité.
+- L’application ne dispose pas encore de base de données, de comptes utilisateurs ou d’historique serveur persistant.
+- Les appels sont non streamés et peuvent durer plusieurs minutes.
 
 ## Évolutions prévues
 
-Les extensions envisagées sont :
-
-- intégration réelle de Firecrawl ;
+- intégration Firecrawl pour récupérer les sources accessibles ;
 - recherche web OpenRouter ;
-- ajout d’un arbitre final optionnel ;
-- budget maximal par exécution ;
+- plafond de coût avant et pendant la boucle ;
 - authentification ;
-- historique en base de données ;
+- persistance des analyses ;
 - export Markdown et JSON ;
-- streaming de la progression ;
-- sélection automatique du modèle selon la tâche ;
-- vérification plus stricte des sources ;
-- score détaillé par catégorie ;
-- tableaux de bord de consommation.
-
----
-
-## Avertissement
-
-Un score élevé attribué par un modèle ne constitue pas une preuve de véracité. La boucle contradictoire réduit certains risques d’erreur, mais deux modèles peuvent partager les mêmes biais, utiliser des informations obsolètes ou valider mutuellement une affirmation incorrecte.
-
-Pour les décisions juridiques, financières, médicales, de cybersécurité ou d’architecture critique, une validation humaine et des sources primaires restent indispensables.
+- tests automatisés ;
+- versionnement explicite des modèles ;
+- possibilité d’exiger une validation humaine après le verdict de Grok.
