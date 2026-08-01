@@ -1,96 +1,18 @@
-<!doctype html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Boucle Contradictoire</title>
-  <link rel="stylesheet" href="/styles.css">
-</head>
-<body>
-  <header>
-    <div>
-      <p class="eyebrow">ORCHESTRATION MULTI-MODÈLES</p>
-      <h1>Boucle Contradictoire</h1>
-      <p>Claude rédige, GPT audite et Grok tranche en arbitre indépendant.</p>
-    </div>
-    <span id="health" class="badge">Vérification…</span>
-  </header>
-
-  <main>
-    <section class="panel form-panel">
-      <form id="reviewForm">
-        <label for="request">Demande à traiter</label>
-        <textarea id="request" required minlength="20" placeholder="Décris l’étude, l’analyse ou le document à produire…"></textarea>
-
-        <div class="grid">
-          <div>
-            <label for="claudeModel">Rédacteur — Claude</label>
-            <input id="claudeModel" value="~anthropic/claude-opus-latest" required>
-          </div>
-          <div>
-            <label for="auditorModel">Auditeur — GPT</label>
-            <input id="auditorModel" value="~openai/gpt-latest" required>
-          </div>
-          <div>
-            <label for="arbiterModel">Arbitre final — Grok</label>
-            <input id="arbiterModel" value="~x-ai/grok-latest" required>
-          </div>
-          <div>
-            <label for="maxCycles">Cycles maximum</label>
-            <input id="maxCycles" type="number" min="1" max="5" value="3">
-          </div>
-          <div>
-            <label for="minScore">Score cible de l’auditeur</label>
-            <input id="minScore" type="number" min="50" max="100" value="90">
-          </div>
-        </div>
-
-        <details id="keyDetails">
-          <summary>Clé OpenRouter de test</summary>
-          <label for="apiKey">Clé temporaire</label>
-          <input id="apiKey" type="password" autocomplete="off" placeholder="sk-or-v1-…">
-          <small>Non enregistrée dans le navigateur. En production, utilise la variable secrète Render.</small>
-        </details>
-
-        <button id="submitButton" type="submit">Lancer la boucle</button>
-        <p id="error" class="error" hidden></p>
-      </form>
-    </section>
-
-    <section class="panel results-panel">
-      <div id="empty" class="empty">
-        <div class="loop">↻</div>
-        <h2>Prêt pour une contre-analyse</h2>
-        <p>Le document, les audits, l’arbitrage final et les coûts apparaîtront ici.</p>
-      </div>
-
-      <div id="results" hidden>
-        <div class="metrics">
-          <article><span>Statut</span><strong id="status">—</strong></article>
-          <article><span>Score final</span><strong id="score">—</strong></article>
-          <article><span>Appels</span><strong id="calls">—</strong></article>
-          <article><span>Coût</span><strong id="cost">—</strong></article>
-        </div>
-
-        <nav class="tabs">
-          <button class="tab active" data-tab="document" type="button">Document final</button>
-          <button class="tab" data-tab="audits" type="button">Audits</button>
-          <button class="tab" data-tab="arbitration" type="button">Arbitrage Grok</button>
-          <button class="tab" data-tab="usage" type="button">Usage</button>
-        </nav>
-
-        <section id="document" class="tab-panel active">
-          <button id="copy" class="secondary" type="button">Copier</button>
-          <pre id="finalDocument"></pre>
-        </section>
-        <section id="audits" class="tab-panel"></section>
-        <section id="arbitration" class="tab-panel"></section>
-        <section id="usage" class="tab-panel"></section>
-      </div>
-    </section>
-  </main>
-
-  <footer>Aucune clé API réelle n’est incluse dans le dépôt.</footer>
-  <script type="module" src="/app.js"></script>
-</body>
-</html>
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Boucle Contradictoire</title><link rel="stylesheet" href="/styles.css"></head>
+<body><header><div><p class="eyebrow">ORCHESTRATION MULTI-MODÈLES</p><h1>Boucle Contradictoire</h1><p>Claude rédige, GPT audite, Grok arbitre — avec recherche web, contrôle Firecrawl et traçabilité.</p></div><div class="header-actions"><span id="health" class="badge">Vérification…</span><div id="auth"></div></div></header>
+<main id="app" hidden>
+<section class="panel form-panel"><form id="reviewForm"><label for="request">Demande à traiter</label><textarea id="request" required minlength="20" placeholder="Décris l’étude, l’analyse ou le document à produire…"></textarea>
+<div class="inline"><label class="switch"><input id="autoModel" type="checkbox" checked> Sélection automatique des modèles</label></div>
+<div id="models" class="grid muted-block disabled"><div><label for="writerModel">Rédacteur</label><input id="writerModel" placeholder="Automatique"></div><div><label for="auditorModel">Auditeur</label><input id="auditorModel" placeholder="Automatique"></div><div><label for="arbiterModel">Arbitre</label><input id="arbiterModel" placeholder="Automatique"></div></div>
+<div class="grid"><div><label for="maxCycles">Cycles maximum</label><input id="maxCycles" type="number" min="1" max="5" value="3"></div><div><label for="minScore">Score cible</label><input id="minScore" type="number" min="50" max="100" value="90"></div></div>
+<details id="keyDetails"><summary>Clé OpenRouter de test</summary><label for="apiKey">Clé temporaire</label><input id="apiKey" type="password" autocomplete="off" placeholder="sk-or-v1-…"><small>Non enregistrée. En production, utilise la variable secrète Render.</small></details>
+<button id="submitButton" type="submit">Lancer la boucle</button><p id="error" class="error" hidden></p></form></section>
+<section class="panel results-panel"><div id="empty" class="empty"><div class="loop">↻</div><h2>Prêt pour une contre-analyse</h2><p>La progression, le résultat, les sources, les scores et les coûts apparaîtront ici.</p></div>
+<div id="progressPanel" hidden><h2>Progression</h2><div class="progress"><span id="progressBar"></span></div><p id="progressText"></p><ol id="timeline"></ol></div>
+<div id="results" hidden><div class="metrics"><article><span>Statut</span><strong id="status">—</strong></article><article><span>Score final</span><strong id="score">—</strong></article><article><span>Appels</span><strong id="calls">—</strong></article><article><span>Coût</span><strong id="cost">—</strong></article></div>
+<nav class="tabs"><button class="tab active" data-tab="document" type="button">Document</button><button class="tab" data-tab="scores" type="button">Scores</button><button class="tab" data-tab="sources" type="button">Sources</button><button class="tab" data-tab="audits" type="button">Audits</button><button class="tab" data-tab="usage" type="button">Consommation</button></nav>
+<section id="document" class="tab-panel active"><div class="toolbar"><button id="copy" class="secondary">Copier</button><a data-export="md">Markdown</a><a data-export="pdf">PDF</a><a data-export="docx">Word</a><a data-export="xlsx">Excel</a></div><pre id="finalDocument"></pre><div id="arbitration"></div></section>
+<section id="scores" class="tab-panel"></section><section id="sources" class="tab-panel"></section><section id="audits" class="tab-panel"></section><section id="usage" class="tab-panel"></section></div></section>
+<section class="panel full"><div class="section-title"><h2>Historique</h2><button id="refreshHistory" class="secondary">Actualiser</button></div><div id="history"></div></section>
+<section class="panel full"><h2>Tableau de bord de consommation</h2><div id="dashboard"></div></section>
+</main><footer>Aucune clé API réelle n’est incluse dans le dépôt.</footer><script type="module" src="/app.js"></script></body></html>
