@@ -1,6 +1,64 @@
 # Boucle Contradictoire
 
-Application web Node.js qui orchestre une étude multi-modèles avec recherche web, contrôle des sources, corrections successives et arbitrage indépendant.
+Application web Node.js qui orchestre une étude multi-modèles avec recherche web, contrôle strict des sources, corrections successives, arbitrage indépendant, historique PostgreSQL, exports et tableau de bord de consommation.
+
+## Déploiement actuel
+
+L’application est publiée sur Render dans le workspace associé au compte `newbizai2023@gmail.com`.
+
+- **Application** : <https://boucle-contradictoire.onrender.com>
+- **Service Render** : `boucle-contradictoire`
+- **Région** : Frankfurt
+- **Runtime** : Node.js 22
+- **Plan actuel** : Free
+- **Dépôt GitHub** : `newbizai2023-ops/Boucle-Contradictoire`
+- **Branche** : `main`
+- **Auto-déploiement** : activé à chaque commit sur `main`
+- **Base PostgreSQL** : `boucle-contradictoire-db`
+- **Version PostgreSQL** : 18
+- **Région PostgreSQL** : Frankfurt
+
+Le premier build Render a réussi. L’application reste toutefois en configuration de préproduction tant que les secrets et la connexion PostgreSQL ne sont pas tous renseignés.
+
+### Configuration Render restant à effectuer
+
+Dans **Render → boucle-contradictoire → Environment**, définir :
+
+```text
+OPENROUTER_API_KEY=
+FIRECRAWL_API_KEY=
+DATABASE_URL=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+SESSION_SECRET=
+APP_URL=https://boucle-contradictoire.onrender.com
+NODE_ENV=production
+DEV_BYPASS_AUTH=false
+```
+
+`DATABASE_URL` doit utiliser la connexion interne de la base `boucle-contradictoire-db`. Les clés réelles ne doivent jamais être ajoutées au dépôt GitHub.
+
+Pour tester temporairement l’interface sans Google OAuth, il est possible d’utiliser :
+
+```text
+DEV_BYPASS_AUTH=true
+```
+
+Cette option doit être désactivée avant toute ouverture à des utilisateurs réels.
+
+### Google OAuth
+
+Créer un client OAuth Google de type **Web application** et déclarer l’URI de redirection exacte :
+
+```text
+https://boucle-contradictoire.onrender.com/auth/google/callback
+```
+
+Une fois `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` configurés dans Render, définir :
+
+```text
+DEV_BYPASS_AUTH=false
+```
 
 ## Fonctionnement complet
 
@@ -9,7 +67,7 @@ Utilisateur authentifié par Google
         ↓
 Classification automatique de la tâche
         ↓
-Sélection des modèles
+Sélection automatique des modèles
         ↓
 Claude rédige avec OpenRouter Web Search
         ↓
@@ -17,43 +75,46 @@ Firecrawl ouvre et extrait les URL citées
         ↓
 GPT audite les faits, sources, calculs et la couverture
         ↓
-Claude corrige selon les anomalies
+Claude corrige les anomalies
         ↓
 Nouveaux cycles d’audit et de correction
         ↓
 Grok rend un arbitrage final indépendant
         ↓
-Enregistrement PostgreSQL, dashboard et exports
+Enregistrement PostgreSQL
+        ↓
+Dashboard, historique et exports
 ```
 
-La progression est diffusée au navigateur en temps réel avec **Server-Sent Events (SSE)** : sélection des modèles, rédaction, vérification des sources, audits, corrections et arbitrage.
+La progression est diffusée en temps réel avec **Server-Sent Events** : sélection des modèles, rédaction, contrôle des sources, audit, correction et arbitrage.
 
-## Modèles et justification
+## Modèles utilisés
 
 | Rôle | Modèle par défaut | Justification |
 |---|---|---|
-| Rédacteur complexe | `~anthropic/claude-opus-latest` | Suit la dernière version de Claude Opus. Ce rôle privilégie la cohérence des documents longs, le suivi d’instructions et les corrections multi-étapes. |
-| Rédacteur général ou recherche récente | `~anthropic/claude-sonnet-latest` | Réduit le coût et la latence pour les demandes générales tout en conservant de bonnes capacités de synthèse et d’utilisation d’outils. |
-| Auditeur | `openai/gpt-5.6-sol` ou `~openai/gpt-latest` | Produit un audit JSON strict, recalcule, recherche les contradictions et attribue des scores détaillés. Sol est utilisé pour les tâches techniques, financières ou juridiques complexes. |
-| Arbitre | `~x-ai/grok-latest` | Apporte un troisième fournisseur et une décision indépendante. Il ne réécrit pas le document : il approuve, approuve avec réserves ou rejette. |
+| Rédacteur complexe | `~anthropic/claude-opus-latest` | Cohérence des documents longs, suivi d’instructions complexes et corrections multi-étapes. |
+| Rédacteur général | `~anthropic/claude-sonnet-latest` | Réduction du coût et de la latence pour les demandes générales ou récentes. |
+| Auditeur complexe | `openai/gpt-5.6-sol` | Audit JSON strict, vérification logique, recalcul et scoring détaillé. |
+| Auditeur général | `~openai/gpt-latest` | Audit polyvalent avec sélection automatique de la version courante. |
+| Arbitre | `~x-ai/grok-latest` | Troisième fournisseur chargé de trancher sans réécrire le document. |
 
-Les alias `~...-latest` évitent de figer l’application sur une version rapidement obsolète. Les modèles peuvent également être imposés manuellement dans l’interface.
+Les alias `~...-latest` évitent de figer l’application sur une version rapidement obsolète. Les modèles peuvent aussi être imposés manuellement.
 
 ## Sélection automatique selon la tâche
 
 L’application classe la demande avant le premier appel :
 
-- **technical** : code, architecture, API, bugs, GitHub ;
-- **financial** : coûts, budget, ROI, FinOps, facturation ;
-- **legal** : loi, contrat, conformité, réglementation ;
-- **current_research** : actualité, annonce, veille, information récente ;
-- **general_analysis** : autre étude ou document.
+- `technical` : code, API, architecture, bugs, GitHub ;
+- `financial` : coûts, budget, ROI, FinOps, facturation ;
+- `legal` : loi, contrat, conformité, réglementation ;
+- `current_research` : actualité, annonce, veille ou information récente ;
+- `general_analysis` : autre étude ou document.
 
-Les tâches à risque ou à raisonnement complexe utilisent Claude Opus et GPT-5.6 Sol. Les tâches générales utilisent des alias plus économiques. Grok reste l’arbitre final.
+Les tâches techniques, financières et juridiques utilisent les modèles les plus puissants. Les tâches générales utilisent une configuration plus économique.
 
 ## Recherche web OpenRouter
 
-Chaque rôle peut utiliser le serveur d’outils :
+Les appels peuvent activer l’outil :
 
 ```json
 {
@@ -68,34 +129,31 @@ Chaque rôle peut utiliser le serveur d’outils :
 }
 ```
 
-Le modèle décide quand rechercher. OpenRouter utilise la recherche native du fournisseur lorsqu’elle est disponible et peut basculer vers un moteur compatible. Les annotations `url_citation` sont récupérées par l’application et ajoutées au dossier de preuve.
+Les citations structurées renvoyées par OpenRouter sont ajoutées au dossier de preuve transmis à l’auditeur.
 
-Documentation : <https://openrouter.ai/docs/guides/features/server-tools/web-search>
+## Firecrawl
 
-## Intégration réelle de Firecrawl
-
-Après chaque rédaction ou correction, l’application collecte les URL citées dans le document et les citations structurées renvoyées par OpenRouter. Jusqu’à dix URL uniques sont contrôlées avec :
+Après chaque rédaction ou correction, l’application collecte les URL citées et contrôle jusqu’à dix pages avec :
 
 ```text
 POST https://api.firecrawl.dev/v2/scrape
 ```
 
-Firecrawl récupère le contenu principal au format Markdown avec suppression des images Base64, blocage des publicités et `zeroDataRetention: true`. Le rapport transmis à GPT contient l’accessibilité, le titre, le statut, la classe de source et un extrait. Une source inaccessible n’est jamais considérée comme vérifiée.
-
-Documentation : <https://docs.firecrawl.dev/api-reference/endpoint/scrape>
+Firecrawl extrait le contenu principal au format Markdown. Une page inaccessible, bloquée ou sans contenu exploitable n’est jamais considérée comme vérifiée.
 
 ## Vérification stricte des sources
 
-Le contrôle combine :
+Le contrôle porte notamment sur :
 
-- présence d’une URL réelle pour les affirmations importantes ;
-- accessibilité et extraction par Firecrawl ;
-- classification indicative de la source : officielle, documentation primaire, média reconnu ou autre ;
-- comparaison du contenu extrait avec l’affirmation auditée.
+- la présence d’une URL réelle ;
+- l’accessibilité de la page ;
+- la concordance entre la source et l’affirmation ;
+- la fraîcheur de l’information ;
+- la préférence pour les sources primaires ;
+- la reproductibilité des calculs ;
+- l’absence de citations inventées.
 
-L’auditeur pénalise les sources inaccessibles, les sources secondaires lorsqu’une source primaire est attendue, les dates incohérentes, les calculs non reproductibles, les affirmations non étayées et les citations inventées ou sans URL.
-
-Cette classification est une heuristique et ne remplace pas une validation humaine.
+La classification des domaines reste une heuristique et ne remplace pas une revue humaine.
 
 ## Scores détaillés
 
@@ -104,7 +162,7 @@ Chaque audit retourne un score global et six scores sur 100 :
 | Catégorie | Objet |
 |---|---|
 | `exactitude_factuelle` | conformité des affirmations aux preuves ; |
-| `qualite_sources` | accessibilité, autorité et pertinence des sources ; |
+| `qualite_sources` | accessibilité, autorité et pertinence ; |
 | `calculs` | unités, formules et reproductibilité ; |
 | `couverture` | réponse à toutes les dimensions demandées ; |
 | `coherence` | absence de contradiction interne ; |
@@ -112,46 +170,20 @@ Chaque audit retourne un score global et six scores sur 100 :
 
 Les anomalies sont classées en `critique`, `elevee`, `moyenne` ou `faible`. Une anomalie critique ou élevée empêche la validation automatique.
 
-## Arbitrage Grok
+## Prompts des modèles
 
-Après le dernier audit, Grok reçoit la demande initiale, le document final, tous les audits et l’état des sources vérifiées. Il retourne :
+Les prompts sont définis dans `server.js` et versionnés avec le code.
 
-```json
-{
-  "decision": "APPROUVE | APPROUVE_AVEC_RESERVES | REJETE",
-  "confiance": 0,
-  "motifs": [],
-  "reserves": [],
-  "actions_requises": []
-}
-```
-
-Un consensus entre modèles ne constitue pas une preuve. Les décisions importantes restent soumises à une revue humaine.
-
-## Prompts utilisés par les modèles
-
-Les prompts sont définis côté serveur dans `server.js`. Ils sont versionnés avec le code afin que le comportement de la boucle soit auditable. Les variables entre accolades sont remplacées au moment de l’exécution.
-
-### Claude — rédacteur et correcteur
-
-**Prompt système :**
+### Claude — rédacteur
 
 ```text
 Tu es le rédacteur principal. Produis un document professionnel, structuré et directement exploitable. Sépare faits vérifiés, hypothèses, estimations et recommandations. Utilise les outils web lorsque les informations peuvent avoir changé. Toute affirmation factuelle importante doit être associée à une source identifiable. N'invente jamais de source. Si une information n'est pas confirmable, écris exactement : « Je ne peux pas confirmer cette information ».
 ```
 
-**Prompt utilisateur pour la rédaction initiale :**
+### Claude — correcteur
 
 ```text
-{demande_utilisateur}
-```
-
-Claude reçoit directement la demande saisie dans l’interface. L’outil `openrouter:web_search` est activé pour lui permettre de rechercher les informations susceptibles d’avoir changé.
-
-**Prompt utilisateur pour une correction :**
-
-```text
-Corrige intégralement le document en tenant compte de l’audit contradictoire ci-dessous.
+Corrige intégralement le document en tenant compte de l’audit contradictoire.
 
 DEMANDE INITIALE :
 {demande_utilisateur}
@@ -165,37 +197,18 @@ AUDIT STRUCTURÉ :
 SOURCES VÉRIFIÉES :
 {sources_firecrawl_json}
 
-Exigences :
-- corriger toutes les anomalies critiques et élevées ;
-- ne pas supprimer une réserve simplement pour améliorer le score ;
-- remplacer les affirmations non vérifiables par une formulation explicitement incertaine ;
-- conserver les informations exactes et utiles ;
-- produire le document complet corrigé, et non une liste de modifications.
+Corrige toutes les anomalies critiques et élevées, conserve les informations exactes et produis le document complet corrigé.
 ```
 
-Le correcteur reçoit donc les anomalies de GPT et le dossier de preuves constitué par OpenRouter et Firecrawl.
-
-### GPT — auditeur contradictoire
-
-**Prompt système :**
+### GPT — auditeur
 
 ```text
 Tu es un auditeur contradictoire indépendant. Vérifie le document contre la demande, le dossier de sources et les résultats de vérification Firecrawl. Réponds uniquement en JSON. Sois sévère avec les sources inaccessibles, secondaires lorsque des sources primaires existent, citations sans URL, dates incohérentes, calculs non reproductibles et affirmations non étayées.
 ```
 
-**Prompt utilisateur dynamique :**
+Le format attendu contient notamment :
 
-```text
-DEMANDE INITIALE :
-{demande_utilisateur}
-
-DOCUMENT À AUDITER :
-{document_courant}
-
-DOSSIER DE SOURCES VÉRIFIÉES :
-{sources_verifiees_json}
-
-Retourne ce JSON strict :
+```json
 {
   "score_global": 0,
   "scores": {
@@ -207,51 +220,21 @@ Retourne ce JSON strict :
     "actualite": 0
   },
   "decision": "CORRIGER|VALIDER",
-  "resume": "",
-  "anomalies": [
-    {
-      "categorie": "",
-      "gravite": "critique|elevee|moyenne|faible",
-      "probleme": "",
-      "preuve": "",
-      "correction_attendue": ""
-    }
-  ],
+  "anomalies": [],
   "sources_non_verifiees": [],
   "nouveau_cycle_requis": true
 }
-
-Chaque score est sur 100.
 ```
 
-GPT ne rédige pas la version finale. Il doit identifier les écarts, fournir la preuve disponible et préciser la correction attendue. Une source inaccessible ou non concordante ne doit pas être considérée comme une preuve valide.
-
-### Grok — arbitre final
-
-**Prompt système :**
+### Grok — arbitre
 
 ```text
 Tu es l'arbitre final indépendant. Tu ne réécris pas le document. Tu tranches entre la version finale et les audits en privilégiant les preuves vérifiables. Réponds uniquement en JSON avec decision, confiance, motifs, reserves et actions_requises.
 ```
 
-**Prompt utilisateur dynamique :**
+Format attendu :
 
-```text
-DEMANDE INITIALE :
-{demande_utilisateur}
-
-DOCUMENT FINAL :
-{document_final}
-
-HISTORIQUE DES AUDITS :
-{audits_json}
-
-ÉTAT DES SOURCES VÉRIFIÉES :
-{sources_verifiees_json}
-
-Décide si le document peut être livré.
-
-Retourne uniquement ce JSON strict :
+```json
 {
   "decision": "APPROUVE|APPROUVE_AVEC_RESERVES|REJETE",
   "confiance": 0,
@@ -259,75 +242,37 @@ Retourne uniquement ce JSON strict :
   "reserves": [],
   "actions_requises": []
 }
-
-Règles d’arbitrage :
-- n’approuve pas une affirmation importante uniquement parce que Claude et GPT sont d’accord ;
-- privilégie les sources primaires accessibles et concordantes ;
-- rejette si une erreur critique persiste ;
-- utilise APPROUVE_AVEC_RESERVES lorsque le document reste exploitable malgré des limites clairement signalées ;
-- exprime la confiance sur 100.
 ```
 
-Grok intervient une seule fois, après les cycles Claude–GPT. Son rôle est de réduire le risque d’une validation circulaire entre le rédacteur et l’auditeur.
+## Authentification et sessions
 
-### Paramètres communs des appels OpenRouter
-
-```json
-{
-  "temperature": 0.1,
-  "max_completion_tokens": 7000,
-  "provider": {
-    "allow_fallbacks": true,
-    "data_collection": "deny"
-  }
-}
-```
-
-Pour les réponses d’audit et d’arbitrage, l’application demande également :
-
-```json
-{
-  "response_format": {
-    "type": "json_object"
-  }
-}
-```
-
-Ces prompts constituent la configuration actuelle de l’application. Toute modification doit être relue avec attention, car elle peut modifier les scores, la fréquence des corrections, le coût et le taux d’approbation.
-
-## Authentification Google
-
-L’application utilise OAuth 2.0 avec Passport. Il faut créer un client OAuth « Web application » dans Google Cloud et déclarer l’URI de redirection :
-
-```text
-https://VOTRE-DOMAINE/auth/google/callback
-```
-
-Variables nécessaires :
-
-```text
-GOOGLE_CLIENT_ID
-GOOGLE_CLIENT_SECRET
-SESSION_SECRET
-APP_URL
-```
-
-Les sessions sont stockées dans PostgreSQL et utilisent des cookies `httpOnly`, `sameSite=lax` et `secure` en production. `DEV_BYPASS_AUTH=true` existe uniquement pour le développement local.
+L’authentification utilise Google OAuth 2.0 avec Passport. Les sessions utilisent des cookies `httpOnly`, `sameSite=lax` et `secure` en production. Les sessions peuvent être stockées dans PostgreSQL.
 
 ## Historique PostgreSQL
 
-Chaque exécution est associée à l’utilisateur Google et conserve la demande, le type de tâche, les modèles réellement utilisés, les versions, les audits, les sources vérifiées, l’arbitrage, le document final, les tokens, le coût, le statut et la date.
+Chaque exécution conserve :
 
-Tables principales : `users`, `runs` et `session`. L’utilisateur ne peut consulter et exporter que ses propres exécutions.
+- la demande ;
+- le type de tâche ;
+- les modèles utilisés ;
+- les versions successives ;
+- les audits ;
+- les sources vérifiées ;
+- l’arbitrage ;
+- les coûts et tokens ;
+- le document final ;
+- le statut et la date.
+
+Tables principales : `users`, `runs` et `session`.
 
 ## Exports
 
-Une exécution terminée peut être exportée en :
+Les exécutions terminées peuvent être exportées en :
 
-- **Markdown** : document et arbitrage ;
-- **PDF** : document final et arbitrage ;
-- **Word `.docx`** : document éditable ;
-- **Excel `.xlsx`** : synthèse, scores par cycle et consommation détaillée.
+- Markdown ;
+- PDF ;
+- Word `.docx` ;
+- Excel `.xlsx`.
 
 Routes :
 
@@ -338,49 +283,39 @@ GET /api/runs/:id/export/docx
 GET /api/runs/:id/export/xlsx
 ```
 
-## Streaming de la progression
-
-`POST /api/jobs` crée une tâche et renvoie un identifiant. Le navigateur ouvre ensuite :
+## Streaming SSE
 
 ```text
-GET /api/jobs/:id/events
+POST /api/jobs
+GET  /api/jobs/:id/events
 ```
 
-Cette route SSE diffuse les événements `models`, `progress`, `source`, `audit`, `complete` et `error`.
+Événements diffusés : `models`, `progress`, `source`, `audit`, `complete` et `error`.
 
 ## Tableau de bord de consommation
 
-Le tableau de bord agrège sur 90 jours : nombre d’exécutions, nombre de validations, coût total, tokens d’entrée et de sortie, nombre d’appels et coût par modèle.
+Le dashboard agrège sur 90 jours :
 
-Les coûts proviennent du champ `usage.cost` renvoyé par OpenRouter. Ils doivent être rapprochés de la facturation fournisseur pour un contrôle financier définitif.
+- nombre d’exécutions ;
+- nombre de validations ;
+- coût total ;
+- tokens d’entrée et de sortie ;
+- nombre d’appels ;
+- coût par modèle.
+
+Les coûts sont issus du champ `usage.cost` renvoyé par OpenRouter et doivent être rapprochés de la facture fournisseur.
 
 ## API
 
 | Route | Fonction |
 |---|---|
-| `GET /api/health` | état OpenRouter, Firecrawl, Google et PostgreSQL ; |
+| `GET /api/health` | état des connexions ; |
 | `GET /api/me` | utilisateur connecté ; |
 | `POST /api/jobs` | création d’une boucle ; |
 | `GET /api/jobs/:id/events` | progression SSE ; |
 | `GET /api/history` | historique personnel ; |
 | `GET /api/dashboard` | consommation agrégée ; |
 | `GET /api/runs/:id/export/:format` | export. |
-
-## Configuration
-
-```text
-OPENROUTER_API_KEY=
-FIRECRAWL_API_KEY=
-DATABASE_URL=
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-SESSION_SECRET=
-APP_URL=http://localhost:3000
-PORT=3000
-DEV_BYPASS_AUTH=false
-```
-
-Aucun secret réel ne doit être commité. `.env` est ignoré par Git.
 
 ## Installation locale
 
@@ -390,24 +325,27 @@ cp .env.example .env
 npm start
 ```
 
-Pour un test sans OAuth ni PostgreSQL :
+Pour un test local sans OAuth :
 
 ```text
 DEV_BYPASS_AUTH=true
 ```
 
-L’historique reste alors limité à la mémoire du processus et disparaît au redémarrage.
+## Sécurité
 
-## Déploiement Render
-
-`render.yaml` crée un Web Service Node.js Starter à Frankfurt et une base Render PostgreSQL à Frankfurt. Il injecte automatiquement `DATABASE_URL` et configure le health check `/api/health`.
-
-Après création du Blueprint, renseigner manuellement les secrets OpenRouter, Firecrawl et Google ainsi que l’URL publique dans `APP_URL`.
+- aucune clé réelle dans GitHub ;
+- secrets stockés uniquement dans Render ;
+- `.env` ignoré par Git ;
+- cookies sécurisés en production ;
+- aucune tentative de contournement des pages protégées ou payantes ;
+- les résultats sensibles doivent être revus humainement.
 
 ## Limites connues
 
 - Les tâches SSE actives sont conservées en mémoire : une seule instance applicative est recommandée dans cette version.
-- Une coupure du processus interrompt une boucle en cours, mais les exécutions terminées restent en base.
-- Firecrawl ne garantit pas l’accès aux pages protégées, payantes ou bloquées. L’application ne contourne aucun contrôle d’accès.
-- Les classifications de domaines et les scores sont des aides, pas des certifications.
-- Les exports PDF et Word privilégient la robustesse ; la mise en page reste volontairement simple.
+- Une coupure du processus interrompt une boucle en cours.
+- Le plan Render Free peut mettre le service en veille.
+- La base PostgreSQL Free peut être temporaire selon les conditions du compte Render.
+- Firecrawl ne garantit pas l’accès aux pages protégées ou bloquées.
+- Les scores produits par les modèles ne constituent pas une certification.
+- Le build signale actuellement deux vulnérabilités npm de sévérité modérée à analyser avant un usage de production.
