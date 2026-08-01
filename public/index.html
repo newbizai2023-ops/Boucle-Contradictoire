@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Boucle Contradictoire</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">ORCHESTRATION MULTI-MODÈLES</p>
+      <h1>Boucle Contradictoire</h1>
+      <p>Un modèle rédige, un second audite, puis la réponse est corrigée jusqu’au seuil défini.</p>
+    </div>
+    <span id="health" class="badge">Vérification…</span>
+  </header>
+
+  <main>
+    <section class="panel form-panel">
+      <form id="reviewForm">
+        <label for="request">Demande à traiter</label>
+        <textarea id="request" required minlength="20" placeholder="Décris l’étude, l’analyse ou le document à produire…"></textarea>
+
+        <div class="grid">
+          <div>
+            <label for="claudeModel">Modèle rédacteur</label>
+            <input id="claudeModel" value="anthropic/claude-sonnet-4" required>
+          </div>
+          <div>
+            <label for="auditorModel">Modèle auditeur</label>
+            <input id="auditorModel" value="openai/gpt-5" required>
+          </div>
+          <div>
+            <label for="maxCycles">Cycles maximum</label>
+            <input id="maxCycles" type="number" min="1" max="5" value="3">
+          </div>
+          <div>
+            <label for="minScore">Score cible</label>
+            <input id="minScore" type="number" min="50" max="100" value="90">
+          </div>
+        </div>
+
+        <details id="keyDetails">
+          <summary>Clé OpenRouter de test</summary>
+          <label for="apiKey">Clé temporaire</label>
+          <input id="apiKey" type="password" autocomplete="off" placeholder="sk-or-v1-…">
+          <small>Non enregistrée dans le navigateur. En production, utilise la variable secrète Render.</small>
+        </details>
+
+        <button id="submitButton" type="submit">Lancer la boucle</button>
+        <p id="error" class="error" hidden></p>
+      </form>
+    </section>
+
+    <section class="panel results-panel">
+      <div id="empty" class="empty">
+        <div class="loop">↻</div>
+        <h2>Prêt pour une contre-analyse</h2>
+        <p>Le résultat final, les audits, les coûts et les versions apparaîtront ici.</p>
+      </div>
+
+      <div id="results" hidden>
+        <div class="metrics">
+          <article><span>Statut</span><strong id="status">—</strong></article>
+          <article><span>Score final</span><strong id="score">—</strong></article>
+          <article><span>Appels</span><strong id="calls">—</strong></article>
+          <article><span>Coût</span><strong id="cost">—</strong></article>
+        </div>
+
+        <nav class="tabs">
+          <button class="tab active" data-tab="document" type="button">Document final</button>
+          <button class="tab" data-tab="audits" type="button">Audits</button>
+          <button class="tab" data-tab="usage" type="button">Usage</button>
+        </nav>
+
+        <section id="document" class="tab-panel active">
+          <button id="copy" class="secondary" type="button">Copier</button>
+          <pre id="finalDocument"></pre>
+        </section>
+        <section id="audits" class="tab-panel"></section>
+        <section id="usage" class="tab-panel"></section>
+      </div>
+    </section>
+  </main>
+
+  <footer>Aucune clé API réelle n’est incluse dans le dépôt.</footer>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
