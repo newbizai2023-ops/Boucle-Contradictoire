@@ -1,13 +1,16 @@
 {
   "name": "boucle-contradictoire",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "private": true,
   "description": "Boucle contradictoire multi-modèles avec recherche web, arbitrage, historique et exports",
   "type": "module",
   "scripts": {
     "start": "node scripts/apply-runtime-fixes.cjs && node server.js",
     "dev": "node scripts/apply-runtime-fixes.cjs && node --watch server.js",
-    "check": "node scripts/apply-runtime-fixes.cjs && node --check server.js && node --check public/app.js"
+    "check": "node scripts/apply-runtime-fixes.cjs && node --check server.js && node --check public/app.js",
+    "release:patch": "npm version patch --no-git-tag-version",
+    "release:minor": "npm version minor --no-git-tag-version",
+    "release:major": "npm version major --no-git-tag-version"
   },
   "engines": { "node": ">=20" },
   "dependencies": {
