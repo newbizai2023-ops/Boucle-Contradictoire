@@ -3,6 +3,8 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const serverPath = path.join(root, 'server.js');
+const appPath = path.join(root, 'public', 'app.js');
+const indexPath = path.join(root, 'public', 'index.html');
 let source = fs.readFileSync(serverPath, 'utf8');
 let changes = 0;
 
@@ -11,6 +13,17 @@ function replaceOnce(before, after) {
     source = source.replace(before, after);
     changes += 1;
   }
+}
+
+function patchFile(filePath, replacements) {
+  let content = fs.readFileSync(filePath, 'utf8');
+  for (const [before, after] of replacements) {
+    if (content.includes(before)) {
+      content = content.replace(before, after);
+      changes += 1;
+    }
+  }
+  fs.writeFileSync(filePath, content, 'utf8');
 }
 
 // Le compte de contournement de développement doit exister en base afin que
@@ -22,14 +35,10 @@ if (!source.includes('dev-bypass-local')) {
   );
 }
 
-// Ne plus exclure le compte DEV_BYPASS_AUTH de la persistance PostgreSQL.
 replaceOnce(
   'async function saveRun(userId,result,request,task,models){if(!pool||userId==="00000000-0000-0000-0000-000000000001")return;',
   'async function saveRun(userId,result,request,task,models){if(!pool)return;'
 );
-
-// Dès qu'une base est disponible, l'historique et le dashboard doivent la lire,
-// y compris pour le compte de développement. La mémoire reste un repli local.
 replaceOnce(
   'if(!pool||req.effectiveUser.id.startsWith("00000000"))return res.json({runs:[...jobs.values()]',
   'if(!pool)return res.json({runs:[...jobs.values()]'
@@ -52,12 +61,24 @@ replaceOnce(
   'const verified=await verifySources(document,result.calls,process.env.FIRECRAWL_API_KEY,job);',
   'const verified=firecrawlEnabled?await verifySources(document,result.calls,process.env.FIRECRAWL_API_KEY,job):annotationSources(result.calls).map(source=>({...source,accessible:null,reason:"Vérification Firecrawl désactivée",sourceClass:sourceClass(source.url)}));'
 );
-
-// Le formulaire multipart transmet uniquement l'état de Firecrawl.
 replaceOnce(
   'attachments,autoModel:req.body.autoModel!=="false",maxCycles:',
   'attachments,autoModel:req.body.autoModel!=="false",firecrawl:req.body.firecrawl!=="false",maxCycles:'
 );
 
 fs.writeFileSync(serverPath, source, 'utf8');
+
+patchFile(indexPath, [
+  ['<input id="webSearch" type="checkbox" checked> Recherche Web et vérification des sources via Firecrawl', '<input id="firecrawl" type="checkbox" checked> Vérification approfondie des sources via Firecrawl'],
+  ['<small id="webSearchHelp">Active la recherche Web du rédacteur et le contrôle des pages citées par Firecrawl.</small>', '<small id="firecrawlHelp">La recherche Web OpenRouter reste toujours active. Ce bouton contrôle uniquement l’extraction et la vérification des pages par Firecrawl.</small>']
+]);
+
+patchFile(appPath, [
+  ["$('#webSearch').checked = false;", "$('#firecrawl').checked = false;"],
+  ["$('#webSearch').disabled = true;", "$('#firecrawl').disabled = true;"],
+  ["$('#webSearchHelp').textContent = 'Firecrawl n’est pas configuré sur le serveur : la recherche Web est désactivée.';", "$('#firecrawlHelp').textContent = 'Firecrawl n’est pas configuré sur le serveur. La recherche Web OpenRouter reste active, mais la vérification approfondie est indisponible.';"],
+  ["formData.append('webSearch',String($('#webSearch').checked));", "formData.append('firecrawl',String($('#firecrawl').checked));"],
+  ["'<p>Recherche Web désactivée ou aucune source détectée.</p>'", "'<p>Aucune source structurée détectée par OpenRouter.</p>'"]
+]);
+
 console.log(`Persistance historique / contrôle Firecrawl appliqués : ${changes}`);
