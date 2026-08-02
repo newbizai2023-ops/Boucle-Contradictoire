@@ -14,7 +14,14 @@ async function init() {
   $('#logout').onclick = async()=>{ await json('/auth/logout',{method:'POST'}); location.reload(); };
   $('#app').hidden = false;
   $('#keyDetails').open = !health.hasOpenRouterKey;
-  await Promise.all([loadHistory(), loadDashboard()]);
+  if (!health.hasFirecrawlKey) {
+    $('#webSearch').checked = false;
+    $('#webSearch').disabled = true;
+    $('#webSearchHelp').textContent = 'Firecrawl n’est pas configuré sur le serveur : la recherche Web est désactivée.';
+  }
+  const [historyResult, dashboardResult] = await Promise.allSettled([loadHistory(), loadDashboard()]);
+  if (historyResult.status === 'rejected') $('#history').innerHTML = `<p class="error">Historique indisponible : ${esc(historyResult.reason.message)}</p>`;
+  if (dashboardResult.status === 'rejected') $('#dashboard').innerHTML = `<p class="error">Tableau de bord indisponible : ${esc(dashboardResult.reason.message)}</p>`;
 }
 $('#autoModel').addEventListener('change', e => $('#models').classList.toggle('disabled', e.target.checked));
 $('#files').addEventListener('change', renderSelectedFiles);
@@ -27,6 +34,7 @@ $('#reviewForm').addEventListener('submit', async event => {
   const formData = new FormData();
   formData.append('request',$('#request').value);
   formData.append('autoModel',String($('#autoModel').checked));
+  formData.append('webSearch',String($('#webSearch').checked));
   formData.append('writerModel',$('#writerModel').value.trim());
   formData.append('auditorModel',$('#auditorModel').value.trim());
   formData.append('arbiterModel',$('#arbiterModel').value.trim());
@@ -44,7 +52,7 @@ function watchJob(id) {
   const add = e => { const d=JSON.parse(e.data); addTimeline(d.message || d.type); if (d.percent) setProgress(d.percent,d.message); };
   ['progress','models','source','audit'].forEach(type=>es.addEventListener(type,add));
   es.addEventListener('insight', e=>{ const d=JSON.parse(e.data); addAnalysis(d); });
-  es.addEventListener('complete', e=>{ es.close(); const d=JSON.parse(e.data); renderResult(d.result); setProgress(100,'Terminé'); resetButton(); loadHistory(); loadDashboard(); });
+  es.addEventListener('complete', e=>{ es.close(); const d=JSON.parse(e.data); renderResult(d.result); setProgress(100,'Terminé'); resetButton(); loadHistory().catch(showError); loadDashboard().catch(showError); });
   es.addEventListener('error', e=>{ if(e.data){ const d=JSON.parse(e.data); showError(new Error(d.message)); addAnalysis({category:'error',message:d.message}); } es.close(); resetButton(); });
 }
 function setProgress(p,t){ $('#progressBar').style.width=`${Math.min(100,p)}%`; $('#progressText').textContent=t||''; }
@@ -66,11 +74,11 @@ function renderResult(data){
   document.querySelectorAll('[data-export]').forEach(a=>{ a.href=`/api/runs/${data.id}/export/${a.dataset.export}`; });
 }
 function renderScores(audits){ const keys=['exactitude_factuelle','qualite_sources','calculs','couverture','coherence','actualite']; return `<div class="table-wrap"><table><thead><tr><th>Cycle</th><th>Global</th>${keys.map(k=>`<th>${k.replaceAll('_',' ')}</th>`).join('')}</tr></thead><tbody>${audits.map(a=>`<tr><td>${a.cycle}</td><td>${a.score_global}</td>${keys.map(k=>`<td>${a.scores?.[k]??'—'}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`; }
-function renderSources(sources){ return sources.length?`<div class="source-grid">${sources.map(s=>`<article class="source ${s.accessible?'ok':'bad'}"><b>${esc(s.title||s.url)}</b><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a><p>${s.accessible?'Accessible et extraite par Firecrawl':`Non vérifiée : ${esc(s.reason)}`}</p><small>${esc(s.sourceClass)}</small></article>`).join('')}</div>`:'<p>Aucune source détectée.</p>'; }
+function renderSources(sources){ return sources.length?`<div class="source-grid">${sources.map(s=>`<article class="source ${s.accessible?'ok':'bad'}"><b>${esc(s.title||s.url)}</b><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a><p>${s.accessible?'Accessible et extraite par Firecrawl':`Non vérifiée : ${esc(s.reason)}`}</p><small>${esc(s.sourceClass)}</small></article>`).join('')}</div>`:'<p>Recherche Web désactivée ou aucune source détectée.</p>'; }
 function renderUsage(calls){ return `<div class="table-wrap"><table><thead><tr><th>Rôle</th><th>Modèle</th><th>Entrée</th><th>Sortie</th><th>Coût</th></tr></thead><tbody>${calls.map(c=>`<tr><td>${esc(c.role)}</td><td>${esc(c.model)}</td><td>${c.usage?.prompt_tokens||0}</td><td>${c.usage?.completion_tokens||0}</td><td>$${Number(c.usage?.cost||0).toFixed(4)}</td></tr>`).join('')}</tbody></table></div>`; }
 async function loadHistory(){ const {runs}=await json('/api/history'); $('#history').innerHTML=runs.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Demande</th><th>Type</th><th>Statut</th><th>Coût</th></tr></thead><tbody>${runs.map(r=>`<tr><td>${new Date(r.created_at||r.createdAt||Date.now()).toLocaleString()}</td><td>${esc((r.request||'').slice(0,90))}</td><td>${esc(r.task_type||r.taskType||'')}</td><td>${esc(r.status)}</td><td>$${Number(r.total_cost||r.totalCost||0).toFixed(4)}</td></tr>`).join('')}</tbody></table></div>`:'<p>Aucun historique.</p>'; }
 async function loadDashboard(){ const d=await json('/api/dashboard'); $('#dashboard').innerHTML=`<div class="metrics"><article><span>Exécutions</span><strong>${d.totals.runs}</strong></article><article><span>Validées</span><strong>${d.totals.validated}</strong></article><article><span>Coût total</span><strong>$${Number(d.totals.cost).toFixed(4)}</strong></article><article><span>Tokens</span><strong>${(d.totals.promptTokens+d.totals.completionTokens).toLocaleString()}</strong></article></div>${renderUsage(d.byModel.map(m=>({role:`${m.calls} appels`,model:m.model,usage:{prompt_tokens:m.promptTokens,completion_tokens:m.completionTokens,cost:m.cost}})))}`; }
-$('#refreshHistory').onclick=()=>Promise.all([loadHistory(),loadDashboard()]);
+$('#refreshHistory').onclick=()=>Promise.allSettled([loadHistory(),loadDashboard()]);
 $('#copy').onclick=()=>navigator.clipboard.writeText($('#finalDocument').textContent);
 document.querySelectorAll('.tab').forEach(tab=>tab.onclick=()=>{ document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===tab)); document.querySelectorAll('.tab-panel').forEach(x=>x.classList.toggle('active',x.id===tab.dataset.tab)); });
 init().catch(showError);
