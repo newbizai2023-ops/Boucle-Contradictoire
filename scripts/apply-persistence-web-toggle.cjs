@@ -39,41 +39,25 @@ replaceOnce(
   'if(!pool){const runs=[...jobs.values()]'
 );
 
-// Option par exécution : active/désactive la recherche OpenRouter et le contrôle Firecrawl.
+// Firecrawl est optionnel par exécution. La recherche Web OpenRouter reste toujours active.
 replaceOnce(
   'const minScore=Math.min(100,Math.max(50,Number(body.minScore||90)));const result=',
-  'const minScore=Math.min(100,Math.max(50,Number(body.minScore||90)));const webSearchEnabled=body.webSearch!==false;const result='
+  'const minScore=Math.min(100,Math.max(50,Number(body.minScore||90)));const firecrawlEnabled=body.firecrawl!==false;const result='
 );
 replaceOnce(
   'sources:[],analysisLog:[],totalCost:0,status:"running"',
-  'sources:[],analysisLog:[],webSearchEnabled,totalCost:0,status:"running"'
-);
-replaceOnce(
-  'message:"Rédaction initiale avec recherche web"',
-  'message:webSearchEnabled?"Rédaction initiale avec recherche Web":"Rédaction initiale sans recherche Web"'
-);
-replaceOnce(
-  'const first=await callOpenRouter({apiKey,model:models.writer,system:writerSystem,user:request,web:true});',
-  'const first=await callOpenRouter({apiKey,model:models.writer,system:writerSystem,user:request,web:webSearchEnabled});'
+  'sources:[],analysisLog:[],firecrawlEnabled,webSearchEnabled:true,totalCost:0,status:"running"'
 );
 replaceOnce(
   'const verified=await verifySources(document,result.calls,process.env.FIRECRAWL_API_KEY,job);',
-  'const verified=webSearchEnabled?await verifySources(document,result.calls,process.env.FIRECRAWL_API_KEY,job):[];'
-);
-replaceOnce(
-  'const correction=await callOpenRouter({apiKey,model:models.writer,system:writerSystem,user:',
-  'const correction=await callOpenRouter({apiKey,model:models.writer,system:writerSystem,user:'
-);
-replaceOnce(
-  'JSON.stringify(audit,null,2)}`,web:true});document=correction.content;',
-  'JSON.stringify(audit,null,2)}`,web:webSearchEnabled});document=correction.content;'
+  'const verified=firecrawlEnabled?await verifySources(document,result.calls,process.env.FIRECRAWL_API_KEY,job):annotationSources(result.calls).map(source=>({...source,accessible:null,reason:"Vérification Firecrawl désactivée",sourceClass:sourceClass(source.url)}));'
 );
 
-// Le formulaire multipart transmet explicitement l'état de l'interrupteur.
+// Le formulaire multipart transmet uniquement l'état de Firecrawl.
 replaceOnce(
   'attachments,autoModel:req.body.autoModel!=="false",maxCycles:',
-  'attachments,autoModel:req.body.autoModel!=="false",webSearch:req.body.webSearch!=="false",maxCycles:'
+  'attachments,autoModel:req.body.autoModel!=="false",firecrawl:req.body.firecrawl!=="false",maxCycles:'
 );
 
 fs.writeFileSync(serverPath, source, 'utf8');
-console.log(`Persistance historique / contrôle Web appliqués : ${changes}`);
+console.log(`Persistance historique / contrôle Firecrawl appliqués : ${changes}`);
