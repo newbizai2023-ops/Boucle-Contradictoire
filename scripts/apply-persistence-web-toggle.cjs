@@ -81,4 +81,38 @@ patchFile(appPath, [
   ["'<p>Recherche Web désactivée ou aucune source détectée.</p>'", "'<p>Aucune source structurée détectée par OpenRouter.</p>'"]
 ]);
 
-console.log(`Persistance historique / contrôle Firecrawl appliqués : ${changes}`);
+// Sur mobile, EventSource peut être interrompu lorsque le navigateur passe en
+// arrière-plan. On conserve l'identifiant du traitement et on laisse le
+// navigateur se reconnecter au lieu de fermer définitivement le flux.
+patchFile(appPath, [
+  [
+    'let currentRunId = null;',
+    "let currentRunId = localStorage.getItem('currentRunId');\nlet currentEventSource = null;"
+  ],
+  [
+    "const [historyResult, dashboardResult] = await Promise.allSettled([loadHistory(), loadDashboard()]);",
+    "const [historyResult, dashboardResult] = await Promise.allSettled([loadHistory(), loadDashboard()]);\n  if (currentRunId) { $('#empty').hidden=true; $('#results').hidden=true; $('#progressPanel').hidden=false; $('#analysisPanel').hidden=false; setProgress(1,'Reconnexion au traitement…'); watchJob(currentRunId); }"
+  ],
+  [
+    "const { id } = await json('/api/jobs',{method:'POST',body:formData}); currentRunId=id; watchJob(id);",
+    "const { id } = await json('/api/jobs',{method:'POST',body:formData}); currentRunId=id; localStorage.setItem('currentRunId',id); watchJob(id);"
+  ],
+  [
+    "function watchJob(id) {\n  const es = new EventSource(`/api/jobs/${id}/events`);",
+    "function watchJob(id) {\n  if (currentEventSource) currentEventSource.close();\n  const es = new EventSource(`/api/jobs/${id}/events`);\n  currentEventSource = es;"
+  ],
+  [
+    "es.addEventListener('complete', e=>{ es.close(); const d=JSON.parse(e.data); renderResult(d.result); setProgress(100,'Terminé'); resetButton(); loadHistory().catch(showError); loadDashboard().catch(showError); });",
+    "es.addEventListener('complete', e=>{ es.close(); currentEventSource=null; localStorage.removeItem('currentRunId'); const d=JSON.parse(e.data); renderResult(d.result); setProgress(100,'Terminé'); resetButton(); loadHistory().catch(showError); loadDashboard().catch(showError); });"
+  ],
+  [
+    "es.addEventListener('error', e=>{ if(e.data){ const d=JSON.parse(e.data); showError(new Error(d.message)); addAnalysis({category:'error',message:d.message}); } es.close(); resetButton(); });",
+    "es.addEventListener('error', e=>{ if(e.data){ const d=JSON.parse(e.data); showError(new Error(d.message)); addAnalysis({category:'error',message:d.message}); es.close(); currentEventSource=null; localStorage.removeItem('currentRunId'); resetButton(); } else { setProgress(Number($('#progressBar').style.width.replace('%',''))||1,'Connexion interrompue, reprise automatique…'); } });"
+  ],
+  [
+    "$('#refreshHistory').onclick=()=>Promise.allSettled([loadHistory(),loadDashboard()]);",
+    "$('#refreshHistory').onclick=()=>Promise.allSettled([loadHistory(),loadDashboard()]);\ndocument.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ loadHistory().catch(()=>{}); loadDashboard().catch(()=>{}); if(currentRunId && (!currentEventSource || currentEventSource.readyState===EventSource.CLOSED)) watchJob(currentRunId); } });\nwindow.addEventListener('online',()=>{ if(currentRunId && (!currentEventSource || currentEventSource.readyState===EventSource.CLOSED)) watchJob(currentRunId); });"
+  ]
+]);
+
+console.log(`Persistance historique / contrôle Firecrawl / reprise mobile appliqués : ${changes}`);
