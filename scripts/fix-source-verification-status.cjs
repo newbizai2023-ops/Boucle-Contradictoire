@@ -9,8 +9,6 @@ let changes = 0;
 let server = fs.readFileSync(serverPath, 'utf8');
 let app = fs.readFileSync(appPath, 'utf8');
 
-// L'absence volontaire de contrôle Firecrawl ne doit pas être traitée comme
-// un échec d'accessibilité ni provoquer mécaniquement une mauvaise note.
 const auditMarker = 'Chaque score est sur 100.';
 const auditRule = ' RÈGLE DE NOTATION DES SOURCES : accessible=true signifie contrôlée et accessible ; accessible=false signifie contrôle tenté mais en échec ; accessible=null signifie source trouvée par OpenRouter mais non contrôlée parce que Firecrawl est désactivé. Une source accessible=null ne doit jamais être qualifiée d’inaccessible ou d’échec Firecrawl et la désactivation volontaire de Firecrawl ne doit pas, à elle seule, diminuer la note. Évalue néanmoins la traçabilité des URL, la qualité des domaines et l’appui réel des affirmations.';
 if (server.includes(auditMarker) && !server.includes('accessible=null signifie source trouvée')) {
@@ -18,15 +16,11 @@ if (server.includes(auditMarker) && !server.includes('accessible=null signifie s
   changes += 1;
 }
 
-// Résumé de contrôle : distinguer les quatre états au lieu de regrouper les
-// sources non contrôlées avec les véritables erreurs techniques.
 server = server.replace(
   /Sources contrôlées\s*:\s*\$\{[^`]+?non vérifiées\.?/g,
   'Sources : ${verified.filter(s=>s.accessible===true).length} accessibles, ${verified.filter(s=>s.accessible===false).length} inaccessibles, ${verified.filter(s=>s.accessible===null).length} non contrôlées, ${verified.filter(s=>s.accessible===false && /HTTP|timeout|fetch|Firecrawl|clé|API/i.test(String(s.reason||""))).length} erreurs de contrôle.'
 );
 
-// Affichage détaillé : état explicite, sans classe d'erreur pour les sources
-// simplement non contrôlées.
 const renderSourcesPattern = /function renderSources\(sources\)\{[\s\S]*?\}\nfunction renderUsage/;
 if (renderSourcesPattern.test(app)) {
   app = app.replace(renderSourcesPattern, `function sourceState(source){
@@ -49,4 +43,4 @@ function renderUsage`);
 
 fs.writeFileSync(serverPath, server, 'utf8');
 fs.writeFileSync(appPath, app, 'utf8');
-console.log(\`Statuts de vérification des sources corrigés : \${changes}\`);
+console.log(`Statuts de vérification des sources corrigés : ${changes}`);
