@@ -32,13 +32,26 @@ app = replaceOnce(
   "  formData.append('apiKey',$('#apiKey').value.trim());\n  formData.append('firecrawlApiKey',$('#firecrawlApiKey').value.trim());"
 );
 
-// Une clé Firecrawl peut désormais être fournie depuis la page : ne pas bloquer
-// le contrôle lorsque la variable Render est absente.
-app = replaceOnce(
-  app,
-  "    $('#webSearch').checked = false;\n    $('#webSearch').disabled = true;\n    $('#webSearchHelp').textContent = 'Firecrawl n’est pas configuré sur le serveur : la recherche Web est désactivée.';",
-  "    $('#webSearch').checked = true;\n    $('#webSearch').disabled = false;\n    $('#webSearchHelp').textContent = 'Aucune clé Firecrawl serveur détectée. Saisis une clé temporaire ci-dessous pour activer la vérification approfondie. La recherche Web OpenRouter reste disponible.';"
-);
+// Compatibilité avec l'ancien identifiant webSearch et le nouvel identifiant firecrawl.
+// La case doit toujours rester cliquable : la validation de la clé se fait au lancement.
+const disabledBlocks = [
+  {
+    before: "    $('#webSearch').checked = false;\n    $('#webSearch').disabled = true;\n    $('#webSearchHelp').textContent = 'Firecrawl n’est pas configuré sur le serveur : la recherche Web est désactivée.';",
+    after: "    $('#webSearch').checked = false;\n    $('#webSearch').disabled = false;\n    $('#webSearchHelp').textContent = 'Aucune clé Firecrawl serveur détectée. Saisis une clé temporaire ci-dessous, puis coche cette option pour activer la vérification approfondie. La recherche Web OpenRouter reste active.';"
+  },
+  {
+    before: "    $('#firecrawl').checked = false;\n    $('#firecrawl').disabled = true;\n    $('#firecrawlHelp').textContent = 'Firecrawl n’est pas configuré sur le serveur. La recherche Web OpenRouter reste active, mais la vérification approfondie est indisponible.';",
+    after: "    $('#firecrawl').checked = false;\n    $('#firecrawl').disabled = false;\n    $('#firecrawlHelp').textContent = 'Aucune clé Firecrawl serveur détectée. Saisis une clé temporaire ci-dessous, puis coche cette option pour activer la vérification approfondie. La recherche Web OpenRouter reste active.';"
+  }
+];
+for (const block of disabledBlocks) app = replaceOnce(app, block.before, block.after);
+
+// Si une clé temporaire est saisie, activer automatiquement la vérification.
+if (!app.includes("firecrawlApiKey.addEventListener")) {
+  const anchor = "$('#files').addEventListener('change', renderSelectedFiles);";
+  const handler = `${anchor}\nconst firecrawlKeyInput=$('#firecrawlApiKey');\nif(firecrawlKeyInput){firecrawlKeyInput.addEventListener('input',()=>{const toggle=$('#firecrawl')||$('#webSearch');const help=$('#firecrawlHelp')||$('#webSearchHelp');if(toggle){toggle.disabled=false;if(firecrawlKeyInput.value.trim())toggle.checked=true;}if(help&&firecrawlKeyInput.value.trim())help.textContent='Clé Firecrawl temporaire détectée : la vérification approfondie sera utilisée pour cette analyse.';});}`;
+  app = replaceOnce(app, anchor, handler);
+}
 
 // Utiliser d'abord les secrets Render, puis les clés temporaires de la requête.
 server = replaceOnce(
@@ -60,4 +73,4 @@ server = replaceOnce(
 fs.writeFileSync(serverPath, server, 'utf8');
 fs.writeFileSync(appPath, app, 'utf8');
 fs.writeFileSync(indexPath, index, 'utf8');
-console.log(`Champs de clés API ajoutés sur la home : ${changes}`);
+console.log(`Champs de clés API / activation Firecrawl corrigés : ${changes}`);
