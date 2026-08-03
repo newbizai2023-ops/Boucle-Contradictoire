@@ -1,28 +1,20 @@
 # Boucle Contradictoire
 
-Application web Node.js qui orchestre une étude multi-modèles avec recherche web, contrôle strict des sources, corrections successives, arbitrage indépendant, historique PostgreSQL, exports et tableau de bord de consommation.
+Application web Node.js qui orchestre une analyse multi-modèles avec recherche Web, contrôle des sources, corrections successives, arbitrage indépendant, historique PostgreSQL, exports et tableau de bord de consommation.
 
-## Déploiement actuel
+**Version actuelle : 2.1.14**
 
-L’application est publiée sur Render dans le workspace associé au compte `newbizai2023@gmail.com`.
+## Déploiement
 
-- **Application** : <https://boucle-contradictoire.onrender.com>
-- **Service Render** : `boucle-contradictoire`
-- **Région** : Frankfurt
-- **Runtime** : Node.js 22
-- **Plan actuel** : Free
-- **Dépôt GitHub** : `newbizai2023-ops/Boucle-Contradictoire`
-- **Branche** : `main`
-- **Auto-déploiement** : activé à chaque commit sur `main`
-- **Base PostgreSQL** : `boucle-contradictoire-db`
-- **Version PostgreSQL** : 18
-- **Région PostgreSQL** : Frankfurt
+- Application : <https://boucle-contradictoire.onrender.com>
+- Service Render : `boucle-contradictoire`
+- Région : Frankfurt
+- Runtime : Node.js 22
+- Dépôt : `newbizai2023-ops/Boucle-Contradictoire`
+- Branche : `main`
+- Base : PostgreSQL
 
-Le premier build Render a réussi. L’application reste toutefois en configuration de préproduction tant que les secrets et la connexion PostgreSQL ne sont pas tous renseignés.
-
-### Configuration Render restant à effectuer
-
-Dans **Render → boucle-contradictoire → Environment**, définir :
+Variables Render attendues :
 
 ```text
 OPENROUTER_API_KEY=
@@ -36,177 +28,181 @@ NODE_ENV=production
 DEV_BYPASS_AUTH=false
 ```
 
-`DATABASE_URL` doit utiliser la connexion interne de la base `boucle-contradictoire-db`. Les clés réelles ne doivent jamais être ajoutées au dépôt GitHub.
+Les clés réelles ne doivent jamais être ajoutées au dépôt.
 
-Pour tester temporairement l’interface sans Google OAuth, il est possible d’utiliser :
-
-```text
-DEV_BYPASS_AUTH=true
-```
-
-Cette option doit être désactivée avant toute ouverture à des utilisateurs réels.
-
-### Google OAuth
-
-Créer un client OAuth Google de type **Web application** et déclarer l’URI de redirection exacte :
+## Fonctionnement
 
 ```text
-https://boucle-contradictoire.onrender.com/auth/google/callback
+Utilisateur authentifié
+        ↓
+Classification de la tâche
+        ↓
+Sélection des modèles
+        ↓
+Rédaction avec recherche Web OpenRouter
+        ↓
+Extraction et contrôle des URL avec Firecrawl
+        ↓
+Audit contradictoire structuré
+        ↓
+Correction complète du document
+        ↓
+Nouveaux cycles de contrôle
+        ↓
+Arbitrage final indépendant
+        ↓
+Historique, dashboard et exports
 ```
 
-Une fois `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` configurés dans Render, définir :
+La progression est diffusée en temps réel par Server-Sent Events et affichée sous forme de fil chronologique.
+
+## Modèles par défaut
+
+| Type de tâche | Rédacteur | Auditeur | Arbitre |
+|---|---|---|---|
+| Technique | Claude Opus latest | GPT-5.6 Sol | Grok latest |
+| Financier / FinOps | Claude Opus latest | GPT-5.6 Sol | Grok latest |
+| Juridique / conformité | Claude Opus latest | GPT-5.6 Sol | Grok latest |
+| Recherche actuelle | Claude Sonnet latest | GPT-5.6 Sol | Grok latest |
+| Analyse générale | Claude Sonnet latest | GPT latest | Grok latest |
+
+Les modèles peuvent être sélectionnés manuellement dans l’interface.
+
+## Détection du type de tâche
+
+- `technical` : code, bug, API, architecture, développement, script, GitHub ;
+- `financial` : prix, coût, budget, FinOps, ROI, économie, facturation ;
+- `legal` : contrat, droit, loi, règlement, conformité ;
+- `current_research` : actualité, annonce, veille, information récente ;
+- `general_analysis` : cas général.
+
+## Politique de sources
+
+Les prompts renforcés imposent désormais les règles suivantes :
+
+1. Toute affirmation factuelle importante doit être associée à une source identifiable et directement exploitable.
+2. La hiérarchie de préférence est :
+   - source officielle ou texte normatif ;
+   - documentation ou publication primaire ;
+   - article scientifique évalué par les pairs ;
+   - données institutionnelles ;
+   - média reconnu ;
+   - source secondaire.
+3. Les affirmations critiques doivent être croisées avec au moins deux sources indépendantes lorsque cela est raisonnablement possible.
+4. Deux pages reprenant la même dépêche, la même étude ou le même communiqué ne constituent pas deux sources indépendantes.
+5. Les divergences entre sources doivent être présentées explicitement.
+6. La date de publication doit être distinguée de la date réelle de l’événement et, le cas échéant, de la date d’entrée en vigueur.
+7. Une source inaccessible ou une citation qui ne soutient pas l’affirmation est considérée comme non vérifiée.
+8. Une source inventée ou un calcul déterminant faux constitue une anomalie critique.
+9. Toute information impossible à confirmer doit être accompagnée de la formulation :
 
 ```text
-DEV_BYPASS_AUTH=false
+Je ne peux pas confirmer cette information
 ```
 
-## Fonctionnement complet
+## Recherche Web OpenRouter
 
-```text
-Utilisateur authentifié par Google
-        ↓
-Classification automatique de la tâche
-        ↓
-Sélection automatique des modèles
-        ↓
-Claude rédige avec OpenRouter Web Search
-        ↓
-Firecrawl ouvre et extrait les URL citées
-        ↓
-GPT audite les faits, sources, calculs et la couverture
-        ↓
-Claude corrige les anomalies
-        ↓
-Nouveaux cycles d’audit et de correction
-        ↓
-Grok rend un arbitrage final indépendant
-        ↓
-Enregistrement PostgreSQL
-        ↓
-Dashboard, historique et exports
-```
-
-La progression est diffusée en temps réel avec **Server-Sent Events** : sélection des modèles, rédaction, contrôle des sources, audit, correction et arbitrage.
-
-## Modèles utilisés
-
-| Rôle | Modèle par défaut | Justification |
-|---|---|---|
-| Rédacteur complexe | `~anthropic/claude-opus-latest` | Cohérence des documents longs, suivi d’instructions complexes et corrections multi-étapes. |
-| Rédacteur général | `~anthropic/claude-sonnet-latest` | Réduction du coût et de la latence pour les demandes générales ou récentes. |
-| Auditeur complexe | `openai/gpt-5.6-sol` | Audit JSON strict, vérification logique, recalcul et scoring détaillé. |
-| Auditeur général | `~openai/gpt-latest` | Audit polyvalent avec sélection automatique de la version courante. |
-| Arbitre | `~x-ai/grok-latest` | Troisième fournisseur chargé de trancher sans réécrire le document. |
-
-Les alias `~...-latest` évitent de figer l’application sur une version rapidement obsolète. Les modèles peuvent aussi être imposés manuellement.
-
-## Sélection automatique selon la tâche
-
-L’application classe la demande avant le premier appel :
-
-- `technical` : code, API, architecture, bugs, GitHub ;
-- `financial` : coûts, budget, ROI, FinOps, facturation ;
-- `legal` : loi, contrat, conformité, réglementation ;
-- `current_research` : actualité, annonce, veille ou information récente ;
-- `general_analysis` : autre étude ou document.
-
-Les tâches techniques, financières et juridiques utilisent les modèles les plus puissants. Les tâches générales utilisent une configuration plus économique.
-
-## Recherche web OpenRouter
-
-Les appels peuvent activer l’outil :
+Les appels utilisent l’outil :
 
 ```json
 {
-  "tools": [
-    {
-      "type": "openrouter:web_search",
-      "engine": "auto",
-      "search_context_size": "high",
-      "max_total_results": 10
-    }
-  ]
+  "type": "openrouter:web_search",
+  "engine": "auto",
+  "search_context_size": "high",
+  "max_total_results": 10
 }
 ```
 
-Les citations structurées renvoyées par OpenRouter sont ajoutées au dossier de preuve transmis à l’auditeur.
+La recherche Web OpenRouter reste disponible indépendamment de Firecrawl.
 
 ## Firecrawl
 
-Après chaque rédaction ou correction, l’application collecte les URL citées et contrôle jusqu’à dix pages avec :
+Firecrawl est utilisé pour ouvrir et extraire le contenu des URL citées. La case « Vérification approfondie des sources via Firecrawl » ne peut être activée que lorsqu’une clé Firecrawl valide est disponible côté Render ou saisie temporairement dans l’interface.
+
+Formats acceptés :
 
 ```text
-POST https://api.firecrawl.dev/v2/scrape
+fc-...
+fc_...
 ```
 
-Firecrawl extrait le contenu principal au format Markdown. Une page inaccessible, bloquée ou sans contenu exploitable n’est jamais considérée comme vérifiée.
+La validation effectuée dans l’interface contrôle le format, pas l’authenticité de la clé. L’authenticité est vérifiée lors de l’appel API.
 
-## Vérification stricte des sources
+## Prompts utilisés
 
-Le contrôle porte notamment sur :
+Les prompts effectifs sont appliqués par `scripts/strengthen-prompts-and-source-policy.cjs` au démarrage, puis exécutés dans `server.js`.
 
-- la présence d’une URL réelle ;
-- l’accessibilité de la page ;
-- la concordance entre la source et l’affirmation ;
-- la fraîcheur de l’information ;
-- la préférence pour les sources primaires ;
-- la reproductibilité des calculs ;
-- l’absence de citations inventées.
-
-La classification des domaines reste une heuristique et ne remplace pas une revue humaine.
-
-## Scores détaillés
-
-Chaque audit retourne un score global et six scores sur 100 :
-
-| Catégorie | Objet |
-|---|---|
-| `exactitude_factuelle` | conformité des affirmations aux preuves ; |
-| `qualite_sources` | accessibilité, autorité et pertinence ; |
-| `calculs` | unités, formules et reproductibilité ; |
-| `couverture` | réponse à toutes les dimensions demandées ; |
-| `coherence` | absence de contradiction interne ; |
-| `actualite` | fraîcheur des données et cohérence des dates. |
-
-Les anomalies sont classées en `critique`, `elevee`, `moyenne` ou `faible`. Une anomalie critique ou élevée empêche la validation automatique.
-
-## Prompts des modèles
-
-Les prompts sont définis dans `server.js` et versionnés avec le code.
-
-### Claude — rédacteur
+### Prompt système du rédacteur
 
 ```text
-Tu es le rédacteur principal. Produis un document professionnel, structuré et directement exploitable. Sépare faits vérifiés, hypothèses, estimations et recommandations. Utilise les outils web lorsque les informations peuvent avoir changé. Toute affirmation factuelle importante doit être associée à une source identifiable. N'invente jamais de source. Si une information n'est pas confirmable, écris exactement : « Je ne peux pas confirmer cette information ».
+Tu es le rédacteur principal d'une boucle contradictoire. Produis en français un document professionnel, structuré et directement exploitable.
+
+RÈGLES DE FIABILITÉ
+1. Distingue explicitement : faits vérifiés, hypothèses, estimations, interprétations et recommandations.
+2. Toute affirmation factuelle importante doit comporter une citation immédiatement exploitable avec le titre ou l'organisme, la date pertinente et une URL complète.
+3. Privilégie dans cet ordre : source officielle ou texte normatif, documentation ou publication primaire, article scientifique évalué par les pairs, données institutionnelles, média reconnu, puis source secondaire. Explique toute dérogation.
+4. Pour les informations susceptibles d'avoir changé, recherche la version la plus récente et indique la date de consultation ou de mise à jour. Distingue la date de publication de la date réelle de l'événement.
+5. Croise les affirmations critiques avec au moins deux sources indépendantes lorsque cela est raisonnablement possible. Ne considère pas comme indépendantes des pages qui reprennent la même dépêche ou la même étude.
+6. Signale clairement les divergences entre sources, sans les fusionner artificiellement.
+7. N'invente jamais de source, de citation, de chiffre ou de résultat. Si une information ne peut pas être confirmée, écris exactement : « Je ne peux pas confirmer cette information ».
+8. Pour chaque calcul : indique les données d'entrée, unités, formule, étapes, résultat et règle d'arrondi.
+9. Pour les sujets médicaux, juridiques et financiers : précise les limites, le territoire ou la population concernés, la date d'applicabilité et la nécessité éventuelle d'une validation professionnelle.
+10. N'affiche pas de chaîne de pensée privée. Fournis uniquement les éléments de preuve, méthodes, calculs et justifications utiles à la vérification.
+
+STRUCTURE MINIMALE
+- Résumé exécutif
+- Périmètre, date de référence et méthode
+- Faits vérifiés
+- Analyse et calculs reproductibles
+- Incertitudes, divergences et limites
+- Recommandations
+- Sources numérotées avec URL complètes
 ```
 
-### Claude — correcteur
+### Instructions spécifiques selon le domaine
+
+#### Technique
 
 ```text
-Corrige intégralement le document en tenant compte de l’audit contradictoire.
-
-DEMANDE INITIALE :
-{demande_utilisateur}
-
-DOCUMENT ACTUEL :
-{document_courant}
-
-AUDIT STRUCTURÉ :
-{audit_json}
-
-SOURCES VÉRIFIÉES :
-{sources_firecrawl_json}
-
-Corrige toutes les anomalies critiques et élevées, conserve les informations exactes et produis le document complet corrigé.
+Vérifie les versions, prérequis, compatibilités, limites, sécurité, exemples reproductibles et documentation officielle. Sépare comportement documenté, comportement observé et hypothèse.
 ```
 
-### GPT — auditeur
+#### Financier / FinOps
 
 ```text
-Tu es un auditeur contradictoire indépendant. Vérifie le document contre la demande, le dossier de sources et les résultats de vérification Firecrawl. Réponds uniquement en JSON. Sois sévère avec les sources inaccessibles, secondaires lorsque des sources primaires existent, citations sans URL, dates incohérentes, calculs non reproductibles et affirmations non étayées.
+Indique devise, région, période, taxes, remises, hypothèses d'usage, coûts unitaires, formules, scénarios et sensibilité. Ne compare que des périmètres économiquement équivalents.
 ```
 
-Le format attendu contient notamment :
+#### Juridique / conformité
+
+```text
+Privilégie les textes officiels et versions consolidées. Indique juridiction, date d'entrée en vigueur, champ d'application, exceptions et niveau d'incertitude. Ne présente pas l'analyse comme un avis juridique.
+```
+
+#### Actualité
+
+```text
+Distingue date de publication et date de l'événement, vérifie les mises à jour, privilégie les déclarations et documents de première main, et signale les faits encore évolutifs.
+```
+
+### Prompt système de l’auditeur
+
+```text
+Tu es un auditeur contradictoire indépendant et sceptique. Vérifie le document contre la demande initiale, les exigences du domaine, les sources structurées OpenRouter et le contenu réellement extrait par Firecrawl. Réponds uniquement en JSON valide.
+
+AUDIT OBLIGATOIRE
+- Vérifie chaque affirmation matérielle et associe-la à une preuve précise.
+- Sanctionne les URL absentes, les pages inaccessibles, les citations qui ne soutiennent pas l'affirmation et les sources secondaires utilisées alors qu'une source primaire est disponible.
+- Détecte les sources circulaires, les reprises d'une même dépêche ou publication et les faux croisements.
+- Compare date de publication, date de l'événement, date d'entrée en vigueur et date de consultation.
+- Recalcule les résultats à partir des données, unités et formules ; signale tout calcul non reproductible.
+- Identifie les contradictions internes et les divergences entre sources.
+- Pour les sujets médicaux, juridiques ou financiers, contrôle le périmètre, la population ou juridiction, les limites et les avertissements nécessaires.
+- Une affirmation importante non prouvée est une anomalie au minimum élevée ; une source inventée ou un calcul déterminant faux est critique.
+- N'accorde jamais VALIDATION si une anomalie critique ou élevée subsiste, si une source essentielle est inaccessible, ou si un résultat déterminant n'est pas reproductible.
+```
+
+### Format JSON de l’audit
 
 ```json
 {
@@ -220,102 +216,116 @@ Le format attendu contient notamment :
     "actualite": 0
   },
   "decision": "CORRIGER|VALIDER",
-  "anomalies": [],
+  "resume": "",
+  "anomalies": [
+    {
+      "categorie": "fait|source|date|calcul|couverture|coherence|limite",
+      "gravite": "critique|elevee|moyenne|faible",
+      "affirmation_concernee": "",
+      "probleme": "",
+      "preuve": "URL ou extrait précis",
+      "correction_attendue": ""
+    }
+  ],
   "sources_non_verifiees": [],
+  "sources_circulaires_ou_non_independantes": [],
+  "divergences_sources": [],
+  "calculs_reproduits": [
+    {
+      "objet": "",
+      "entrees": [],
+      "formule": "",
+      "resultat": "",
+      "conforme": true
+    }
+  ],
   "nouveau_cycle_requis": true
 }
 ```
 
-### Grok — arbitre
+### Prompt de correction
 
 ```text
-Tu es l'arbitre final indépendant. Tu ne réécris pas le document. Tu tranches entre la version finale et les audits en privilégiant les preuves vérifiables. Réponds uniquement en JSON avec decision, confiance, motifs, reserves et actions_requises.
+Corrige intégralement le document selon l'audit. Traite chaque anomalie critique et élevée. Supprime ou reformule toute affirmation non étayée. Préserve les éléments vérifiés. Rends tous les calculs reproductibles. Signale explicitement les divergences qui ne peuvent pas être tranchées. Maintiens la structure minimale imposée par le prompt système.
 ```
 
-Format attendu :
+Le correcteur reçoit également la demande initiale, le document actuel, l’audit JSON et la liste des sources vérifiées.
+
+### Prompt système de l’arbitre
+
+```text
+Tu es l'arbitre final indépendant. Tu ne réécris pas le document. Tu évalues la version finale, les audits successifs et l'état réel des sources. Réponds uniquement en JSON valide avec decision, confiance, motifs, reserves et actions_requises.
+
+RÈGLES DE DÉCISION
+- APPROUVE uniquement si toutes les affirmations déterminantes sont étayées, les calculs reproductibles et aucune anomalie critique ou élevée ne subsiste.
+- APPROUVE_AVEC_RESERVES uniquement pour des limites explicitement circonscrites qui ne changent pas la conclusion principale.
+- REJETE si une source essentielle est inaccessible ou contradictoire sans traitement, si un calcul déterminant est faux ou non reproductible, si le document dépasse les preuves, ou si le périmètre demandé n'est pas couvert.
+- La confiance est un entier de 0 à 100 et doit refléter la qualité et l'indépendance des preuves, pas le style du document.
+- Les motifs doivent citer les constats précis des audits ou des sources. Les actions requises doivent être concrètes et vérifiables.
+```
+
+### Format JSON de l’arbitrage
 
 ```json
 {
   "decision": "APPROUVE|APPROUVE_AVEC_RESERVES|REJETE",
   "confiance": 0,
-  "motifs": [],
+  "motifs": [
+    {
+      "constat": "",
+      "preuve": ""
+    }
+  ],
   "reserves": [],
   "actions_requises": []
 }
 ```
 
-## Authentification et sessions
+## Règles de validation
 
-L’authentification utilise Google OAuth 2.0 avec Passport. Les sessions utilisent des cookies `httpOnly`, `sameSite=lax` et `secure` en production. Les sessions peuvent être stockées dans PostgreSQL.
+Un document ne peut être validé automatiquement que si :
 
-## Historique PostgreSQL
+- le score global atteint le seuil défini ;
+- aucune anomalie critique ou élevée ne subsiste ;
+- aucune source essentielle n’est non vérifiée ;
+- aucun nouveau cycle n’est demandé ;
+- l’arbitre rend une décision d’approbation.
 
-Chaque exécution conserve :
+## Scores détaillés
+
+| Score | Objet |
+|---|---|
+| `exactitude_factuelle` | conformité des affirmations aux preuves |
+| `qualite_sources` | autorité, indépendance, accessibilité et pertinence |
+| `calculs` | formules, unités, hypothèses et reproductibilité |
+| `couverture` | réponse complète à la demande |
+| `coherence` | absence de contradictions internes |
+| `actualite` | fraîcheur des informations et cohérence des dates |
+
+## Fichiers et interface
+
+- ajout de plusieurs documents ;
+- suppression individuelle d’un document avant analyse ;
+- validation du format des clés API ;
+- activation conditionnelle de Firecrawl ;
+- fil d’information chronologique avec défilement automatique ;
+- sélection manuelle ou automatique des modèles.
+
+## Historique et exports
+
+Chaque exécution peut conserver :
 
 - la demande ;
 - le type de tâche ;
-- les modèles utilisés ;
+- les modèles ;
 - les versions successives ;
 - les audits ;
-- les sources vérifiées ;
+- les sources ;
 - l’arbitrage ;
 - les coûts et tokens ;
-- le document final ;
-- le statut et la date.
+- le document final.
 
-Tables principales : `users`, `runs` et `session`.
-
-## Exports
-
-Les exécutions terminées peuvent être exportées en :
-
-- Markdown ;
-- PDF ;
-- Word `.docx` ;
-- Excel `.xlsx`.
-
-Routes :
-
-```text
-GET /api/runs/:id/export/md
-GET /api/runs/:id/export/pdf
-GET /api/runs/:id/export/docx
-GET /api/runs/:id/export/xlsx
-```
-
-## Streaming SSE
-
-```text
-POST /api/jobs
-GET  /api/jobs/:id/events
-```
-
-Événements diffusés : `models`, `progress`, `source`, `audit`, `complete` et `error`.
-
-## Tableau de bord de consommation
-
-Le dashboard agrège sur 90 jours :
-
-- nombre d’exécutions ;
-- nombre de validations ;
-- coût total ;
-- tokens d’entrée et de sortie ;
-- nombre d’appels ;
-- coût par modèle.
-
-Les coûts sont issus du champ `usage.cost` renvoyé par OpenRouter et doivent être rapprochés de la facture fournisseur.
-
-## API
-
-| Route | Fonction |
-|---|---|
-| `GET /api/health` | état des connexions ; |
-| `GET /api/me` | utilisateur connecté ; |
-| `POST /api/jobs` | création d’une boucle ; |
-| `GET /api/jobs/:id/events` | progression SSE ; |
-| `GET /api/history` | historique personnel ; |
-| `GET /api/dashboard` | consommation agrégée ; |
-| `GET /api/runs/:id/export/:format` | export. |
+Formats d’export : Markdown, PDF, Word et Excel.
 
 ## Installation locale
 
@@ -325,27 +335,24 @@ cp .env.example .env
 npm start
 ```
 
-Pour un test local sans OAuth :
+Pour tester sans OAuth :
 
 ```text
 DEV_BYPASS_AUTH=true
 ```
 
-## Sécurité
+## Vérification du code
 
-- aucune clé réelle dans GitHub ;
-- secrets stockés uniquement dans Render ;
-- `.env` ignoré par Git ;
-- cookies sécurisés en production ;
-- aucune tentative de contournement des pages protégées ou payantes ;
-- les résultats sensibles doivent être revus humainement.
+```bash
+npm run check
+```
+
+Cette commande applique les correctifs de préparation, puis vérifie la syntaxe de `server.js`, de l’interface et de tous les scripts de migration au démarrage.
 
 ## Limites connues
 
-- Les tâches SSE actives sont conservées en mémoire : une seule instance applicative est recommandée dans cette version.
-- Une coupure du processus interrompt une boucle en cours.
-- Le plan Render Free peut mettre le service en veille.
-- La base PostgreSQL Free peut être temporaire selon les conditions du compte Render.
-- Firecrawl ne garantit pas l’accès aux pages protégées ou bloquées.
+- La classification des sources reste heuristique.
+- Firecrawl ne garantit pas l’accès aux pages protégées, payantes ou bloquées.
 - Les scores produits par les modèles ne constituent pas une certification.
-- Le build signale actuellement deux vulnérabilités npm de sévérité modérée à analyser avant un usage de production.
+- Les sujets sensibles doivent être revus par un professionnel qualifié.
+- Les tâches SSE actives sont conservées en mémoire ; une coupure du processus interrompt une analyse en cours.
