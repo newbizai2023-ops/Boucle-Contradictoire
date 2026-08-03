@@ -1,14 +1,14 @@
 {
   "name": "boucle-contradictoire",
-  "version": "2.1.16",
+  "version": "2.1.17",
   "private": true,
   "description": "Boucle contradictoire multi-modèles avec recherche web, documents, arbitrage, historique et exports",
   "type": "module",
   "scripts": {
-    "prepare:runtime": "node scripts/apply-runtime-fixes.cjs && node scripts/harden-generated-server.cjs && node scripts/apply-persistence-web-toggle.cjs && node scripts/fix-source-verification-status.cjs && node scripts/fix-history-refresh.cjs && node scripts/add-home-api-keys.cjs && node scripts/use-sonnet-during-tests.cjs && node scripts/add-file-removal-and-feed-scroll.cjs && node scripts/strengthen-prompts-and-source-policy.cjs && node scripts/hide-server-api-keys.cjs",
+    "prepare:runtime": "node scripts/apply-runtime-fixes.cjs && node scripts/harden-generated-server.cjs && node scripts/apply-persistence-web-toggle.cjs && node scripts/fix-source-verification-status.cjs && node scripts/fix-history-refresh.cjs && node scripts/add-home-api-keys.cjs && node scripts/use-sonnet-during-tests.cjs && node scripts/add-file-removal-and-feed-scroll.cjs && node scripts/strengthen-prompts-and-source-policy.cjs && node scripts/hide-server-api-keys.cjs && node scripts/fix-submit-and-openrouter-tool.cjs",
     "start": "npm run prepare:runtime && node server.js",
     "dev": "npm run prepare:runtime && node --watch server.js",
-    "check": "npm run prepare:runtime && node --check server.js && node --check public/app.js && node --check scripts/apply-runtime-fixes.cjs && node --check scripts/harden-generated-server.cjs && node --check scripts/apply-persistence-web-toggle.cjs && node --check scripts/fix-source-verification-status.cjs && node --check scripts/fix-history-refresh.cjs && node --check scripts/add-home-api-keys.cjs && node --check scripts/use-sonnet-during-tests.cjs && node --check scripts/add-file-removal-and-feed-scroll.cjs && node --check scripts/strengthen-prompts-and-source-policy.cjs && node --check scripts/hide-server-api-keys.cjs",
+    "check": "npm run prepare:runtime && node --check server.js && node --check public/app.js && node --check scripts/apply-runtime-fixes.cjs && node --check scripts/harden-generated-server.cjs && node --check scripts/apply-persistence-web-toggle.cjs && node --check scripts/fix-source-verification-status.cjs && node --check scripts/fix-history-refresh.cjs && node --check scripts/add-home-api-keys.cjs && node --check scripts/use-sonnet-during-tests.cjs && node --check scripts/add-file-removal-and-feed-scroll.cjs && node --check scripts/strengthen-prompts-and-source-policy.cjs && node --check scripts/hide-server-api-keys.cjs && node --check scripts/fix-submit-and-openrouter-tool.cjs",
     "release:patch": "npm version patch --no-git-tag-version",
     "release:minor": "npm version minor --no-git-tag-version",
     "release:major": "npm version major --no-git-tag-version"
